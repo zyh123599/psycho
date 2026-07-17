@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#101a18" />
+    <meta name="description" content="心潮：把一个闪念，走成一次完整的自我梳理。" />
+    <title>心潮 · 自我梳理叙事原型</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="prototype-stage">
+      <section class="phone" id="app-shell" aria-label="心潮移动端产品原型">
+        <div class="grain" aria-hidden="true"></div>
+
+        <section class="screen today-screen" id="today-screen" aria-labelledby="today-title">
+          <header class="app-header">
+            <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天">
+              <span aria-hidden="true">◐</span>
+              <strong>心潮</strong>
+            </a>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="today-hero" aria-hidden="true">
+            <div class="tide-orb"></div>
+            <div class="floating-note note-a"><span>一个念头</span></div>
+            <div class="floating-note note-b"><span>一小步</span></div>
+            <div class="floating-note note-c"><span>留给未来</span></div>
+          </div>
+
+          <div class="hero-copy">
+            <p class="eyebrow">TODAY · 约 5 分钟</p>
+            <h1 id="today-title" tabindex="-1">把一个闪念，<br />走成一次自我梳理。</h1>
+            <p>写下此刻掠过脑海的几句话。你来确认主题，再通过选择、回应和一个微小行动，把它慢慢看清。</p>
+          </div>
+
+          <div class="today-actions">
+            <button class="primary-button" id="start-flow" type="button">
+              <span>开始今天的梳理</span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <p class="privacy-line"><span aria-hidden="true">⌁</span> 默认不保存便贴 · 随时可以停下</p>
+          </div>
+
+          <aside class="due-echo-card" id="due-echo-card" hidden>
+            <span class="tiny-orb" aria-hidden="true"></span>
+            <div>
+              <p>有一句话已经回到今天</p>
+              <button class="text-button" type="button" data-nav-target="echoes-screen">去看看</button>
+            </div>
+          </aside>
+        </section>
+
+        <section class="screen flow-screen notes-screen" id="notes-screen" aria-labelledby="notes-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="notes-back" type="button" aria-label="返回今天">←</button>
+            <div class="step-indicator"><span>01</span><i style="--progress: 16%"></i><small>06</small></div>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading">
+            <p class="eyebrow">序章 · 接住闪念</p>
+            <h1 id="notes-title" tabindex="-1">此刻，有哪些话<br />正在脑海里经过？</h1>
+            <p>不必写完整，也不需要解释。留下 2–4 张便贴就好。</p>
+          </div>
+
+          <div class="note-list" id="note-list" aria-live="polite"></div>
+
+          <div class="note-tools">
+            <button class="ghost-button" id="add-note" type="button"><span aria-hidden="true">＋</span>再加一张</button>
+            <button class="text-button" id="use-note-example" type="button">一键使用示例</button>
+          </div>
+
+          <label class="privacy-toggle" for="notes-personalize">
+            <input id="notes-personalize" type="checkbox" checked />
+            <span class="toggle-track" aria-hidden="true"><i></i></span>
+            <span><strong>参与本次梳理</strong><small>关闭后不用于生成主题；离开本次体验即清除</small></span>
+          </label>
+
+          <div class="sticky-footer">
+            <p class="form-hint" id="notes-hint" role="status">写满至少两张，就可以继续</p>
+            <button class="primary-button" id="notes-continue" type="button" disabled>
+              <span>看看这些闪念指向哪里</span><span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="screen flow-screen theme-screen" id="theme-screen" aria-labelledby="theme-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="theme-back" type="button" aria-label="返回闪念便贴">←</button>
+            <div class="step-indicator"><span>02</span><i style="--progress: 32%"></i><small>06</small></div>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading compact-heading">
+            <p class="eyebrow">主题确认 · 由你决定</p>
+            <h1 id="theme-title" tabindex="-1">哪条线索，最接近<br />你今天想梳理的？</h1>
+            <p>这些只是临时候选，不是对你的定义。你可以纠正或自己写一句。</p>
+          </div>
+
+          <div class="theme-options" id="theme-options" role="group" aria-label="主题候选">
+            <button class="theme-option" type="button" data-theme-index="0" aria-pressed="false"><span>01</span><strong></strong><i aria-hidden="true">○</i></button>
+            <button class="theme-option" type="button" data-theme-index="1" aria-pressed="false"><span>02</span><strong></strong><i aria-hidden="true">○</i></button>
+            <button class="theme-option" type="button" data-theme-index="2" aria-pressed="false"><span>03</span><strong></strong><i aria-hidden="true">○</i></button>
+          </div>
+
+          <div class="custom-theme-card">
+            <label for="custom-theme">都不太像？写下你的版本</label>
+            <textarea id="custom-theme" rows="2" maxlength="80" placeholder="例如：我想知道，为什么总是不敢停下来"></textarea>
+            <button class="small-button" id="choose-custom-theme" type="button" disabled>用这句话</button>
+          </div>
+
+          <div class="sticky-footer">
+            <p class="form-hint" id="theme-hint" role="status">请选择或写下一条本次线索</p>
+            <button class="primary-button" id="theme-continue" type="button" disabled>
+              <span>确认这条线索</span><span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="screen flow-screen overview-screen" id="overview-screen" aria-labelledby="overview-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="overview-back" type="button" aria-label="返回主题确认">←</button>
+            <span class="prototype-pill">今日章节</span>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="overview-hero">
+            <span class="chapter-number">CHAPTER 01</span>
+            <div class="chapter-glyph" aria-hidden="true"><i></i><b>◐</b></div>
+            <p>今天想一起看见</p>
+            <h1 id="overview-title" tabindex="-1">在反复确认之前，<br />先听见自己</h1>
+          </div>
+
+          <blockquote class="confirmed-theme" id="overview-theme"></blockquote>
+
+          <ol class="chapter-route" aria-label="本次章节路线">
+            <li class="is-current"><span>01</span><div><strong>情境选择</strong><small>6 张卡 · 没有标准答案</small></div><i>约 2 分钟</i></li>
+            <li><span>02</span><div><strong>三轮回应</strong><small>你可以纠正，也可以跳过</small></div></li>
+            <li><span>03</span><div><strong>带走一小步</strong><small>行动与未来回响</small></div></li>
+          </ol>
+
+          <div class="boundary-note"><span aria-hidden="true">i</span><p>选择只用于调整本次回应的节奏，不判断人格或心理状况。</p></div>
+
+          <div class="sticky-footer">
+            <button class="primary-button" id="overview-start" type="button">
+              <span>进入第一章</span><span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="screen game-screen" id="game-screen" aria-labelledby="game-title" hidden>
+          <header class="flow-header game-header">
+            <button class="back-button dark-button" id="game-back" type="button" aria-label="暂时离开章节">←</button>
+            <div class="game-progress"><span id="card-count">1 / 6</span><i><b id="card-progress"></b></i></div>
+            <button class="icon-button dark-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="game-context">
+            <p class="eyebrow">第一章 · 看见</p>
+            <h1 id="game-title" tabindex="-1">情境选择</h1>
+            <p class="theme-thread" id="game-theme"></p>
+          </div>
+
+          <div class="scene" id="scene" aria-hidden="true">
+            <div class="scene-halo"></div>
+            <div class="portrait" id="portrait">息</div>
+            <div class="scene-line"></div>
+          </div>
+
+          <section class="card-zone" aria-live="polite">
+            <div class="choice-preview choice-preview-left" id="left-preview">再检查一次</div>
+            <div class="choice-preview choice-preview-right" id="right-preview">先停下来</div>
+            <article class="story-card" id="story-card" tabindex="0" aria-describedby="swipe-help">
+              <div class="card-meta">
+                <div>
+                  <p class="speaker" id="speaker">叙事向导 · 林岚</p>
+                  <p class="speaker-role" id="speaker-role">陪你换一个角度</p>
+                </div>
+                <span class="card-symbol" aria-hidden="true">◌</span>
+              </div>
+              <p class="prompt" id="prompt"></p>
+              <div class="card-divider"></div>
+              <p class="card-whisper" id="card-whisper"></p>
+            </article>
+          </section>
+
+          <div class="choice-actions">
+            <button class="choice-button left" id="left-button" type="button"><span aria-hidden="true">←</span><span id="left-button-label"></span></button>
+            <button class="choice-button right" id="right-button" type="button"><span id="right-button-label"></span><span aria-hidden="true">→</span></button>
+            <button class="neutral-button" id="neutral-button" type="button">两个都不像</button>
+          </div>
+          <p class="swipe-help" id="swipe-help">滑动、点击，或使用键盘 ← → ↓</p>
+          <div class="result-toast" id="result-toast" role="status"></div>
+        </section>
+
+        <section class="screen flow-screen response-screen" id="response-screen" aria-labelledby="response-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="response-back" type="button" aria-label="返回最后一张选择卡">←</button>
+            <div class="step-indicator"><span id="response-step">01</span><i id="response-progress" style="--progress: 33%"></i><small>03</small></div>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading compact-heading">
+            <p class="eyebrow">第二章 · 回应</p>
+            <h1 id="response-title" tabindex="-1">停一下，听听<br />刚才的选择。</h1>
+            <p>一共三轮。这里不会替你解释，你可以随时纠正或结束。</p>
+          </div>
+
+          <article class="response-card">
+            <p class="response-label">我听见的是</p>
+            <blockquote id="response-reference"></blockquote>
+            <div class="response-divider"></div>
+            <h2 id="response-question"></h2>
+            <div class="response-options" id="response-options" role="group" aria-label="回应选项"></div>
+          </article>
+
+          <button class="correction-trigger" id="response-correct" type="button"><span aria-hidden="true">✎</span>这不准确，我来改一句</button>
+          <div class="correction-panel" id="correction-panel" hidden>
+            <label for="response-correction">更接近你的说法</label>
+            <textarea id="response-correction" maxlength="100" rows="2" placeholder="只写你愿意留下的部分"></textarea>
+            <button class="small-button" id="use-correction" type="button" disabled>用这句话继续</button>
+          </div>
+
+          <div class="response-exits">
+            <button class="text-button" id="skip-response" type="button">跳过这一问</button>
+            <button class="text-button quiet" id="stop-responses" type="button">到这里就好</button>
+          </div>
+        </section>
+
+        <section class="screen flow-screen action-screen" id="action-screen" aria-labelledby="action-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="action-back" type="button" aria-label="返回回应">←</button>
+            <span class="prototype-pill">第三章 · 一小步</span>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading compact-heading">
+            <p class="eyebrow">MICRO ACTION</p>
+            <h1 id="action-title" tabindex="-1">不必解决全部，<br />只带走一小步。</h1>
+            <p>因为你选择梳理“<span id="action-theme"></span>”，这里有三个低负担选项。</p>
+          </div>
+
+          <div class="action-options" role="group" aria-label="微行动选项">
+            <button class="action-option" type="button" data-action-id="one-check" aria-pressed="false"><span class="action-icon">01</span><div><strong>提交前，只做最后一次检查</strong><small>给“已经够用”一个明确的停点</small></div><i>○</i></button>
+            <button class="action-option" type="button" data-action-id="release" aria-pressed="false"><span class="action-icon">02</span><div><strong>离开屏幕两分钟，松开肩膀</strong><small>先让身体收到“可以暂停”的信号</small></div><i>○</i></button>
+            <button class="action-option" type="button" data-action-id="reach-out" aria-pressed="false"><span class="action-icon">03</span><div><strong>给信任的人发一句真实近况</strong><small>例如：“我今天有一点绷紧。”</small></div><i>○</i></button>
+          </div>
+
+          <div class="recommendation-note" id="action-rationale" role="status">选择一个最容易做到的，不需要选择“最正确”的。</div>
+
+          <div class="sticky-footer two-actions">
+            <button class="text-button" id="skip-action" type="button">今天先不做</button>
+            <button class="primary-button" id="action-continue" type="button" disabled><span>带走这一步</span><span aria-hidden="true">→</span></button>
+          </div>
+        </section>
+
+        <section class="screen flow-screen echo-screen" id="echo-screen" aria-labelledby="echo-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" id="echo-back" type="button" aria-label="返回微行动">←</button>
+            <span class="prototype-pill">留给未来</span>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading compact-heading">
+            <p class="eyebrow">FUTURE ECHO</p>
+            <h1 id="echo-title" tabindex="-1">想把哪句话，<br />留给之后的自己？</h1>
+            <p>它不会预测或实现什么，只会在你选定的那一天，原样回到这里。</p>
+          </div>
+
+          <div class="echo-candidates" id="echo-candidates" role="group" aria-label="回响候选句">
+            <button type="button" data-echo-index="0" aria-pressed="false"><span>01</span><strong></strong><i>＋</i></button>
+            <button type="button" data-echo-index="1" aria-pressed="false"><span>02</span><strong></strong><i>＋</i></button>
+            <button type="button" data-echo-index="2" aria-pressed="false"><span>03</span><strong></strong><i>＋</i></button>
+          </div>
+
+          <label class="custom-echo" for="custom-echo">
+            <span>或者，写下自己的话</span>
+            <textarea id="custom-echo" maxlength="120" rows="2" placeholder="未来的我，我想提醒你……"></textarea>
+          </label>
+
+          <fieldset class="delay-options">
+            <legend>什么时候再看见</legend>
+            <button type="button" data-delay="1" aria-pressed="true">明天</button>
+            <button type="button" data-delay="3" aria-pressed="false">3 天后</button>
+            <button type="button" data-delay="7" aria-pressed="false">7 天后</button>
+          </fieldset>
+
+          <label class="save-consent" for="save-echo">
+            <input id="save-echo" type="checkbox" />
+            <span aria-hidden="true">✓</span>
+            <p><strong>主动保存在这台设备</strong><small>只有勾选后，这句话和解封日期才会写入本地；便贴、主题与选择不会保存。可随时删除。</small></p>
+          </label>
+
+          <div class="sticky-footer">
+            <p class="form-hint" id="echo-hint" role="status">不勾选也可以完成，本次内容会在离开后消失</p>
+            <button class="primary-button" id="finish-flow" type="button"><span>不保存，完成本次梳理</span><span aria-hidden="true">→</span></button>
+          </div>
+        </section>
+
+        <section class="screen complete-screen" id="complete-screen" aria-labelledby="complete-title" hidden>
+          <header class="app-header">
+            <a class="brand-mark light-brand" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
+            <button class="icon-button dark-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="completion-orbit" aria-hidden="true"><i></i><i></i><i></i><b>◐</b></div>
+          <p class="eyebrow">TODAY'S REFLECTION</p>
+          <h1 id="complete-title" tabindex="-1">你没有急着得到答案，<br />而是听完了一次自己。</h1>
+
+          <article class="completion-card">
+            <p>今天看见的线索</p>
+            <blockquote id="complete-theme"></blockquote>
+            <div class="completion-row"><span>带走的一小步</span><strong id="complete-action"></strong></div>
+            <div class="completion-row"><span>未来回响</span><strong id="complete-echo"></strong></div>
+          </article>
+
+          <p class="completion-note">这是一张本次心理地图，不是对你的长期定义。明天再来时，可以从新的闪念重新开始。</p>
+          <button class="primary-button light-button" id="restart-flow" type="button"><span>再走一次</span><span aria-hidden="true">↻</span></button>
+        </section>
+
+        <section class="screen library-screen" id="echoes-screen" aria-labelledby="echoes-title" hidden>
+          <header class="app-header">
+            <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+          <div class="screen-heading library-heading">
+            <p class="eyebrow">MY ECHOES</p>
+            <h1 id="echoes-title" tabindex="-1">回响</h1>
+            <p>这里只出现你主动保存在这台设备上的话。未到日期前，它会保持封存。</p>
+          </div>
+          <div class="echo-list" id="echo-list"></div>
+          <div class="empty-state" id="echo-empty">
+            <span aria-hidden="true">⌁</span>
+            <h2>还没有保存的回响</h2>
+            <p>完成一次梳理后，你可以选择留一句话给未来。</p>
+            <button class="secondary-button" type="button" data-start-new>开始一次梳理</button>
+          </div>
+          <button class="danger-text-button" id="clear-echoes" type="button" hidden>清空全部回响</button>
+        </section>
+
+        <section class="screen settings-screen" id="settings-screen" aria-labelledby="settings-title" hidden>
+          <header class="app-header">
+            <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+          <div class="screen-heading library-heading">
+            <p class="eyebrow">YOUR SPACE</p>
+            <h1 id="settings-title" tabindex="-1">我的</h1>
+            <p>你决定留下什么，也可以随时把它带走。</p>
+          </div>
+          <section class="settings-card">
+            <h2>本地与隐私</h2>
+            <dl>
+              <div><dt>闪念便贴</dt><dd>仅在本次页面中使用，不持久保存</dd></div>
+              <div><dt>章节选择</dt><dd>仅用于本次回应，离开后清除</dd></div>
+              <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
+            </dl>
+            <button class="secondary-button" id="settings-clear-echoes" type="button">删除全部已保存回响</button>
+          </section>
+          <section class="settings-card">
+            <h2>体验边界</h2>
+            <p>心潮提供叙事选择与自我记录，不提供心理诊断、医疗建议或危机干预。</p>
+            <button class="ghost-button full-width" type="button" data-open-safety>查看完整说明</button>
+          </section>
+          <section class="settings-card subtle-card">
+            <h2>原型版本</h2>
+            <p>V0.2 · 所有内容仅在浏览器中运行，不发送到网络。</p>
+          </section>
+        </section>
+
+        <nav class="bottom-nav" id="bottom-nav" aria-label="主要导航">
+          <button type="button" data-nav-target="today-screen" aria-current="page"><span aria-hidden="true">◐</span><strong>今天</strong></button>
+          <button type="button" data-nav-target="echoes-screen"><span aria-hidden="true">⌁</span><strong>回响</strong></button>
+          <button type="button" data-nav-target="settings-screen"><span aria-hidden="true">○</span><strong>我的</strong></button>
+        </nav>
+
+        <div class="modal-backdrop" id="safety-modal" hidden>
+          <section class="safety-modal" role="dialog" aria-modal="true" aria-labelledby="safety-title">
+            <button class="modal-close" id="close-safety" type="button" aria-label="关闭体验边界">×</button>
+            <span class="modal-icon" aria-hidden="true">◌</span>
+            <p class="eyebrow">BEFORE YOU CONTINUE</p>
+            <h2 id="safety-title">这里是自我梳理体验，<br />不是专业服务</h2>
+            <p>卡片和回应用于帮助你换一个角度观察当下，不代表心理诊断、人格判断或正确答案，也不能替代心理咨询与医疗支持。</p>
+            <p>如果你或他人正面临即时危险，请暂停体验，联系所在地紧急服务、危机支持资源，或一位能够立刻陪伴你的可信任对象。</p>
+            <button class="secondary-button" id="acknowledge-safety" type="button">我知道了</button>
+          </section>
+        </div>
+      </section>
+
+      <aside class="prototype-notes" aria-label="原型说明">
+        <p class="notes-kicker">PRODUCT PROTOTYPE · V0.2</p>
+        <h2>从闪念开始，<br />沿同一条线索走到底。</h2>
+        <p>心潮把便贴、Reigns 式选择、三轮回应、微行动和未来回响串成一段连续体验。隐藏信号只改变回应节奏，不生成长期标签。</p>
+        <ol>
+          <li><span>01</span>闪念便贴</li>
+          <li><span>02</span>主题确认</li>
+          <li><span>03</span>情境选择</li>
+          <li><span>04</span>三轮回应</li>
+          <li><span>05</span>微行动</li>
+          <li><span>06</span>未来回响</li>
+        </ol>
+        <p class="desktop-tip">可用鼠标、触控或键盘完成整条主线</p>
+      </aside>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
