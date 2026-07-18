@@ -20,6 +20,13 @@ import {
   narrativeProfileContext,
   profileContextForModel
 } from "./profile-runtime.js"
+import {
+  AsrError,
+  RealtimeAsrSession,
+  asrErrorMessage,
+  hasAsrSettings,
+  loadAsrSettings
+} from "./asr-client.js"
 
 "use strict"
 
@@ -434,6 +441,12 @@ let quickNoteVoiceStartedAt = 0
 let quickNoteRecordingTimer = null
 const profiledQuickNoteImageSourceIds = new Set()
 let voiceInputActive = false
+let activeAsrSession = null
+let activeAsrOwner = ""
+let activeAsrBaseText = ""
+let activeAsrTranscript = ""
+let activeAsrAutoStopTimer = null
+let chatDraftFromVoice = false
 let ephemeralAnswerRecord = null
 let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 let memorySelectedDateKey = ""
@@ -531,9 +544,9 @@ function quickNoteImageEntry(record) {
 
 function profileFocusFor(reason) {
   const focuses = {
-    notes: "根据用户刚刚主动提供的闪念和图片更新暂时性画像，并给出可供用户自行确认的主题线索。",
+    notes: "根据用户刚刚主动提供的闪念、已确认语音转写和图片更新暂时性画像；转写可能有误，只给出可供用户自行确认的主题线索。",
     choices: "结合本章已确认主题和结构化选择信号，更新暂时性画像；不要把卡片选择解释为人格测评。",
-    chat: "结合用户主动允许用于画像的近期对话表达，更新沟通偏好、当下需要和低负担行动。",
+    chat: "结合用户主动允许用于画像的近期对话表达和已确认语音转写，更新沟通偏好、当下需要和低负担行动；不要推断未提供的声音特征。",
     action: "结合用户主动选择或跳过的微行动，更新可执行偏好；不要把跳过解释为抵抗或问题。",
     feedback: "结合用户对日报表达方式的反馈调整不确定性和沟通偏好，不推断心理特征。",
     complete: "为本次章节形成连续但可修正的暂时性反思画像。"
@@ -549,7 +562,11 @@ function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
   recentQuickNotes.slice(0, 6).forEach((record) => {
     const content = record.text.trim()
     if (!content) return
-    texts.push({ source_id: `quick-note:${record.id}`, source: "note", content })
+    texts.push({
+      source_id: `quick-note:${record.id}`,
+      source: record.voiceDuration > 0 ? "voice_transcript" : "note",
+      content
+    })
   })
 
   if (flow.personalizeNotes) {
@@ -569,8 +586,8 @@ function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
     : flow.chatMessages.filter((message) => message.role === "user").slice(-6)
   userMessages.forEach((message, index) => {
     texts.push({
-      source_id: `response:${index + 1}`,
-      source: "response",
+      source_id: message.id ? `chat:${message.id}` : `response:${index + 1}`,
+      source: message.inputMode === "voice_transcript" ? "voice_transcript" : "response",
       content: message.text
     })
   })
@@ -1058,15 +1075,17 @@ function showScreen(screenOrId, options = {}) {
   const target = typeof screenOrId === "string" ? byId(screenOrId) : screenOrId
   if (!target) return
   if (activeScreenId === "chat-screen" && target.id !== "chat-screen") {
+    if (["chat", "voice-modal"].includes(activeAsrOwner)) cancelActiveAsrImmediately(activeAsrOwner)
     if (chatAbortController) {
       chatAbortController.abort()
       chatAbortController = null
     }
     flow.chatBusy = false
-    setVoiceInputState(false, { transcribe: false })
+    setVoiceInputState(false)
     if (flow.chatMode === "standalone") {
       flow.chatMessages = []
       flow.chatSeed = ""
+      chatDraftFromVoice = false
       byId("chat-input").value = ""
     }
   }
@@ -1912,15 +1931,17 @@ function renderChat() {
     })
   }
   const input = byId("chat-input")
+  const chatAsrActive = activeAsrSession && ["chat", "voice-modal"].includes(activeAsrOwner)
   input.disabled = flow.chatCrisis
+  input.readOnly = Boolean(chatAsrActive)
   input.placeholder = flow.chatCrisis ? "普通陪聊已暂停" : "此刻最想说的是……"
   byId("chat-form").classList.toggle("is-paused", flow.chatCrisis)
-  byId("send-chat").disabled = flow.chatCrisis || flow.chatBusy || input.value.trim().length === 0
-  byId("voice-input").disabled = flow.chatCrisis || flow.chatBusy
+  byId("send-chat").disabled = flow.chatCrisis || flow.chatBusy || chatAsrActive || input.value.trim().length === 0
+  byId("voice-input").disabled = flow.chatCrisis || flow.chatBusy || (activeAsrSession && activeAsrOwner !== "chat")
   byId("chat-status").textContent = flow.chatCrisis
     ? "普通陪聊已暂停，请优先使用上方的即时支持路径"
     : (voiceInputActive
-      ? "语音输入演示中 · 再点一次结束并生成示例文字"
+      ? "正在实时转写；音频直达讯飞且不会保存在本机"
       : (flow.chatBusy
         ? "潮伴正在组织一句回应……"
         : (profileRuntime.consent.serviceProcessing
@@ -1972,11 +1993,18 @@ function companionMessages() {
     }))
 }
 
-async function sendChatMessage(rawText) {
+async function sendChatMessage(rawText, options = {}) {
   const text = rawText.trim()
-  if (!text || flow.chatBusy) return
-  setVoiceInputState(false, { transcribe: false })
-  flow.chatMessages.push({ role: "user", text })
+  if (!text || flow.chatBusy || (activeAsrSession && ["chat", "voice-modal"].includes(activeAsrOwner))) return
+  const inputMode = options.inputMode || (chatDraftFromVoice ? "voice_transcript" : "text")
+  setVoiceInputState(false)
+  flow.chatMessages.push({
+    id: requestId("message"),
+    role: "user",
+    text,
+    inputMode
+  })
+  chatDraftFromVoice = false
   byId("chat-input").value = ""
 
   if (containsCrisisLanguage(text)) {
@@ -2063,7 +2091,9 @@ function beginChat() {
   flow.chatBusy = false
   flow.chatCrisis = false
   flow.chatSeed = ""
-  setVoiceInputState(false, { transcribe: false })
+  chatDraftFromVoice = false
+  byId("chat-input").value = ""
+  setVoiceInputState(false)
   flow.chatSuggestedPrompts = []
   showScreen("chat-screen")
 }
@@ -2077,8 +2107,10 @@ function openStandaloneChat(options = {}) {
     flow.chatCrisis = false
     flow.chatSeed = options.fromReport ? "report" : ""
     flow.chatSuggestedPrompts = []
+    chatDraftFromVoice = false
+    byId("chat-input").value = ""
   }
-  setVoiceInputState(false, { transcribe: false })
+  setVoiceInputState(false)
   showScreen("chat-screen")
 }
 
@@ -2086,22 +2118,229 @@ function setVoiceInputState(active, options = {}) {
   voiceInputActive = active
   const button = byId("voice-input")
   button.setAttribute("aria-pressed", String(active))
-  button.setAttribute("aria-label", active ? "结束语音输入演示" : "开始语音输入演示")
+  button.setAttribute("aria-label", active ? "结束实时语音转写" : "开始实时语音转写")
   button.classList.toggle("is-listening", active)
-
-  if (!active && options.transcribe !== false) {
-    const input = byId("chat-input")
-    if (!input.value.trim()) input.value = "我现在有一点累，想慢慢说。"
-  }
   const input = byId("chat-input")
-  byId("send-chat").disabled = flow.chatBusy || input.value.trim().length === 0
-  byId("chat-status").textContent = active
-    ? "语音输入演示中 · 再点一次结束并生成示例文字"
-    : (options.transcribe === false ? "语音目前为前端交互演示" : "已生成一段示例文字，你可以继续编辑")
+  input.readOnly = active
+  byId("send-chat").disabled = active || flow.chatBusy || input.value.trim().length === 0
+  if (options.message) byId("chat-status").textContent = options.message
 }
 
-function toggleVoiceInputDemo() {
-  setVoiceInputState(!voiceInputActive)
+function joinedAsrDraft(baseText, transcript, maxLength) {
+  const base = typeof baseText === "string" ? baseText : ""
+  const spoken = typeof transcript === "string" ? transcript : ""
+  const separator = base && spoken && !/[\s\n]$/.test(base) ? "\n" : ""
+  return `${base}${separator}${spoken}`.slice(0, maxLength)
+}
+
+function resizeDraftInput(input, maxHeight) {
+  input.style.height = "auto"
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`
+}
+
+function applyActiveAsrTranscript(owner, snapshot) {
+  if (owner !== activeAsrOwner) return
+  activeAsrTranscript = snapshot?.text || ""
+  if (owner === "quick-note") {
+    const input = byId("quick-note-input")
+    input.value = joinedAsrDraft(activeAsrBaseText, activeAsrTranscript, QUICK_NOTE_MAX_LENGTH)
+    byId("quick-note-count").textContent = `${input.value.length} / ${QUICK_NOTE_MAX_LENGTH}`
+    resizeDraftInput(input, 96)
+    updateQuickNoteSaveState()
+    const current = snapshot?.interimText || activeAsrTranscript
+    byId("quick-note-status").textContent = current
+      ? `实时转写：${current.slice(-42)}`
+      : "正在听你说；音频实时直达讯飞，不在本机保存"
+    return
+  }
+
+  const input = byId("chat-input")
+  input.value = joinedAsrDraft(activeAsrBaseText, activeAsrTranscript, 400)
+  resizeDraftInput(input, 82)
+  chatDraftFromVoice = Boolean(activeAsrTranscript.trim())
+  byId("send-chat").disabled = true
+  const current = snapshot?.interimText || activeAsrTranscript
+  if (owner === "voice-modal") {
+    byId("voice-call-status").textContent = current
+      ? `实时转写：${current.slice(-46)}`
+      : "正在听你说；原音频不会保存在本机"
+  } else {
+    byId("chat-status").textContent = current
+      ? `实时转写：${current.slice(-46)}`
+      : "正在听你说；音频实时直达讯飞，不在本机保存"
+  }
+}
+
+function clearActiveAsrTimers() {
+  if (activeAsrAutoStopTimer) window.clearTimeout(activeAsrAutoStopTimer)
+  activeAsrAutoStopTimer = null
+  if (quickNoteRecordingTimer) window.clearInterval(quickNoteRecordingTimer)
+  quickNoteRecordingTimer = null
+}
+
+function cancelActiveAsrImmediately(owner = activeAsrOwner) {
+  if (!activeAsrSession || activeAsrOwner !== owner) return false
+  const session = activeAsrSession
+  finishAsrOwnerUi(owner, { cancelled: true })
+  activeAsrSession = null
+  activeAsrOwner = ""
+  activeAsrBaseText = ""
+  activeAsrTranscript = ""
+  clearActiveAsrTimers()
+  void session.cancel()
+  return true
+}
+
+function finishAsrOwnerUi(owner, { cancelled = false, errorMessage = "" } = {}) {
+  const hasTranscript = Boolean(activeAsrTranscript.trim())
+  clearActiveAsrTimers()
+  if (owner === "quick-note") {
+    const elapsed = quickNoteVoiceStartedAt
+      ? Math.max(1, Math.round((Date.now() - quickNoteVoiceStartedAt) / 1000))
+      : 0
+    quickNoteVoiceStartedAt = 0
+    const button = byId("quick-note-voice")
+    button.classList.remove("is-recording")
+    button.setAttribute("aria-pressed", "false")
+    button.setAttribute("aria-label", "开始实时语音转写闪念")
+    byId("quick-note-input").readOnly = false
+    pendingQuickNoteVoiceDuration = !cancelled && hasTranscript ? Math.min(300, elapsed) : 0
+    byId("quick-note-voice-duration").textContent = formatVoiceDuration(pendingQuickNoteVoiceDuration || 1)
+    byId("quick-note-voice-preview").querySelector("strong").textContent = hasTranscript ? "语音已转成文字" : "语音闪念"
+    byId("quick-note-voice-preview").hidden = !hasTranscript
+    byId("quick-note-status").textContent = errorMessage || (cancelled
+      ? "已取消语音转写"
+      : (hasTranscript ? "已转成可编辑文字；提交闪念后才会进入画像" : "没有识别到可用文字"))
+    updateQuickNoteSaveState()
+  } else {
+    setVoiceInputState(false)
+    byId("chat-input").readOnly = false
+    if (owner === "voice-modal") setVoiceCallState(false)
+    const message = errorMessage || (cancelled
+      ? "已取消语音转写"
+      : (hasTranscript ? "已转成可编辑文字；发送后才会进入对话与画像" : "没有识别到可用文字"))
+    if (owner === "voice-modal") byId("voice-call-status").textContent = message
+    else byId("chat-status").textContent = message
+  }
+}
+
+function handleAsrState(owner, session, state) {
+  if (session !== activeAsrSession || owner !== activeAsrOwner) return
+  const messages = {
+    permission: "等待麦克风授权；授权后音频将实时直达讯飞……",
+    connecting: "正在连接讯飞实时转写……",
+    recording: "正在实时转写；再点一次结束",
+    stopping: "正在结束录音并发送剩余音频……",
+    awaiting_final: "正在等待最后一段转写……"
+  }
+  if (owner === "chat") setVoiceInputState(true, { message: messages[state] })
+  if (owner === "voice-modal") {
+    setVoiceCallState(true)
+    byId("chat-input").readOnly = true
+    byId("send-chat").disabled = true
+    byId("voice-call-status").textContent = messages[state] || byId("voice-call-status").textContent
+  }
+  if (owner === "quick-note") {
+    const button = byId("quick-note-voice")
+    const active = ["permission", "connecting", "recording", "stopping", "awaiting_final"].includes(state)
+    button.classList.toggle("is-recording", active)
+    button.setAttribute("aria-pressed", String(active))
+    button.setAttribute("aria-label", active ? "结束实时语音转写闪念" : "开始实时语音转写闪念")
+    byId("quick-note-input").readOnly = active
+    byId("quick-note-voice-preview").hidden = false
+    byId("quick-note-voice-preview").querySelector("strong").textContent = state === "recording" ? "正在实时转写" : "准备语音转写"
+    byId("quick-note-status").textContent = messages[state] || byId("quick-note-status").textContent
+    if (state === "recording" && !quickNoteVoiceStartedAt) {
+      quickNoteVoiceStartedAt = Date.now()
+      const updateDuration = () => {
+        if (!quickNoteVoiceStartedAt) return
+        const elapsed = Math.max(1, Math.floor((Date.now() - quickNoteVoiceStartedAt) / 1000))
+        byId("quick-note-voice-duration").textContent = formatVoiceDuration(elapsed)
+      }
+      updateDuration()
+      quickNoteRecordingTimer = window.setInterval(updateDuration, 500)
+    }
+    updateQuickNoteSaveState()
+  }
+}
+
+async function startRealtimeAsr(owner) {
+  if (activeAsrSession) await stopRealtimeAsr({ cancel: true })
+  const settings = loadAsrSettings()
+  if (!hasAsrSettings(settings)) {
+    const message = "实时语音转写尚未配置，请提供讯飞 ASR 环境变量"
+    if (owner === "quick-note") byId("quick-note-status").textContent = message
+    else if (owner === "voice-modal") byId("voice-call-status").textContent = message
+    else byId("chat-status").textContent = message
+    return false
+  }
+
+  activeAsrOwner = owner
+  activeAsrBaseText = byId(owner === "quick-note" ? "quick-note-input" : "chat-input").value
+  activeAsrTranscript = ""
+  const session = new RealtimeAsrSession({
+    settings,
+    onState: ({ state }) => handleAsrState(owner, session, state),
+    onTranscript: (snapshot) => {
+      if (session === activeAsrSession) applyActiveAsrTranscript(owner, snapshot)
+    },
+    onError: (error) => {
+      if (session !== activeAsrSession) return
+      finishAsrOwnerUi(owner, { errorMessage: asrErrorMessage(error) })
+      activeAsrSession = null
+      activeAsrOwner = ""
+      activeAsrBaseText = ""
+      activeAsrTranscript = ""
+    }
+  })
+  activeAsrSession = session
+  activeAsrAutoStopTimer = window.setTimeout(() => {
+    if (session === activeAsrSession) void stopRealtimeAsr()
+  }, 5 * 60 * 1000)
+  try {
+    await session.start()
+    return session === activeAsrSession
+  } catch (error) {
+    if (session === activeAsrSession) {
+      const cancelled = error instanceof AsrError && error.code === "asr_cancelled"
+      finishAsrOwnerUi(owner, { cancelled, errorMessage: cancelled ? "" : asrErrorMessage(error) })
+      activeAsrSession = null
+      activeAsrOwner = ""
+      activeAsrBaseText = ""
+      activeAsrTranscript = ""
+    }
+    return false
+  }
+}
+
+async function stopRealtimeAsr({ cancel = false } = {}) {
+  const session = activeAsrSession
+  const owner = activeAsrOwner
+  if (!session || !owner) return null
+  try {
+    const snapshot = cancel ? await session.cancel() : await session.stop()
+    if (session !== activeAsrSession) return snapshot
+    if (!cancel) applyActiveAsrTranscript(owner, snapshot)
+    finishAsrOwnerUi(owner, { cancelled: cancel })
+    return snapshot
+  } catch (error) {
+    if (session === activeAsrSession) {
+      finishAsrOwnerUi(owner, { errorMessage: asrErrorMessage(error) })
+    }
+    return null
+  } finally {
+    if (session === activeAsrSession) {
+      activeAsrSession = null
+      activeAsrOwner = ""
+      activeAsrBaseText = ""
+      activeAsrTranscript = ""
+    }
+  }
+}
+
+async function toggleVoiceInput() {
+  if (activeAsrOwner === "chat") await stopRealtimeAsr()
+  else await startRealtimeAsr("chat")
 }
 
 function endChat() {
@@ -2344,13 +2583,13 @@ function renderInitialImpression() {
 }
 
 function resetQuickNoteComposer() {
-  cancelQuickNoteRecording()
+  if (activeAsrOwner === "quick-note") cancelActiveAsrImmediately("quick-note")
+  void clearQuickNoteVoice()
   byId("quick-note-input").value = ""
   byId("quick-note-input").style.height = ""
   byId("quick-note-count").textContent = `0 / ${QUICK_NOTE_MAX_LENGTH}`
   byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
   clearQuickNotePhoto()
-  clearQuickNoteVoice()
   closeQuickNoteComposer()
 }
 
@@ -2379,7 +2618,9 @@ function syncQuickNoteComposerPreview() {
 
 function updateQuickNoteSaveState() {
   const hasText = byId("quick-note-input").value.trim().length > 0
-  byId("save-quick-note").disabled = !hasText && !pendingQuickNoteImage && pendingQuickNoteVoiceDuration === 0
+  byId("save-quick-note").disabled = activeAsrOwner === "quick-note" || (
+    !hasText && !pendingQuickNoteImage && pendingQuickNoteVoiceDuration === 0
+  )
   syncQuickNoteComposerPreview()
 }
 
@@ -2399,49 +2640,24 @@ function formatVoiceDuration(totalSeconds) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 }
 
-function cancelQuickNoteRecording() {
+async function clearQuickNoteVoice() {
+  if (activeAsrOwner === "quick-note") await stopRealtimeAsr({ cancel: true })
   if (quickNoteRecordingTimer) window.clearInterval(quickNoteRecordingTimer)
   quickNoteRecordingTimer = null
   quickNoteVoiceStartedAt = 0
+  pendingQuickNoteVoiceDuration = 0
   byId("quick-note-voice").classList.remove("is-recording")
   byId("quick-note-voice").setAttribute("aria-pressed", "false")
-  byId("quick-note-voice").setAttribute("aria-label", "开始录制语音闪念")
-}
-
-function clearQuickNoteVoice() {
-  cancelQuickNoteRecording()
-  pendingQuickNoteVoiceDuration = 0
+  byId("quick-note-voice").setAttribute("aria-label", "开始实时语音转写闪念")
+  byId("quick-note-input").readOnly = false
   byId("quick-note-voice-preview").hidden = true
   byId("quick-note-voice-duration").textContent = "0:01"
   updateQuickNoteSaveState()
 }
 
-function toggleQuickNoteVoiceRecording() {
-  if (!quickNoteVoiceStartedAt) {
-    pendingQuickNoteVoiceDuration = 0
-    quickNoteVoiceStartedAt = Date.now()
-    byId("quick-note-voice-preview").hidden = false
-    byId("quick-note-voice-preview").querySelector("strong").textContent = "正在录音"
-    byId("quick-note-voice").classList.add("is-recording")
-    byId("quick-note-voice").setAttribute("aria-pressed", "true")
-    byId("quick-note-voice").setAttribute("aria-label", "结束语音录制")
-    byId("quick-note-status").textContent = "再次点击麦克风结束；还可以同时添加文字或图片"
-    const updateDuration = () => {
-      const elapsed = Math.max(1, Math.floor((Date.now() - quickNoteVoiceStartedAt) / 1000))
-      byId("quick-note-voice-duration").textContent = formatVoiceDuration(elapsed)
-    }
-    updateDuration()
-    quickNoteRecordingTimer = window.setInterval(updateDuration, 500)
-    syncQuickNoteComposerPreview()
-    return
-  }
-
-  pendingQuickNoteVoiceDuration = Math.min(300, Math.max(1, Math.round((Date.now() - quickNoteVoiceStartedAt) / 1000)))
-  cancelQuickNoteRecording()
-  byId("quick-note-voice-preview").querySelector("strong").textContent = "语音闪念"
-  byId("quick-note-voice-duration").textContent = formatVoiceDuration(pendingQuickNoteVoiceDuration)
-  byId("quick-note-status").textContent = "语音已加入，仍可以补充文字或图片"
-  updateQuickNoteSaveState()
+async function toggleQuickNoteVoiceRecording() {
+  if (activeAsrOwner === "quick-note") await stopRealtimeAsr()
+  else await startRealtimeAsr("quick-note")
 }
 
 function loadImageElement(dataUrl) {
@@ -3629,23 +3845,24 @@ function shouldAutoOpenOnboarding() {
 function setVoiceCallState(active) {
   const button = byId("voice-call-toggle")
   button.setAttribute("aria-pressed", String(active))
-  button.setAttribute("aria-label", active ? "暂停语音对话演示" : "开始语音对话演示")
+  button.setAttribute("aria-label", active ? "结束实时语音转写" : "开始实时语音转写")
   button.classList.toggle("is-active", active)
-  byId("voice-call-status").textContent = active ? "正在听你说……再点一下可以暂停" : "已暂停 · 当前只是界面演示"
 }
 
 function openVoiceMode(event) {
   voiceModalReturnFocus = event && event.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : document.activeElement
+  if (activeAsrOwner === "chat") cancelActiveAsrImmediately("chat")
   setVoiceCallState(false)
-  byId("voice-call-status").textContent = "准备好时，点一下开始"
+  byId("voice-call-status").textContent = "点麦克风开始；转写会放进当前对话输入框"
   voiceModal.hidden = false
   window.requestAnimationFrame(() => byId("close-voice-mode").focus())
 }
 
 function closeVoiceMode() {
   if (voiceModal.hidden) return
+  if (activeAsrOwner === "voice-modal") void stopRealtimeAsr()
   voiceModal.hidden = true
   setVoiceCallState(false)
   if (
@@ -3656,6 +3873,11 @@ function closeVoiceMode() {
     voiceModalReturnFocus.focus({ preventScroll: true })
   }
   voiceModalReturnFocus = null
+}
+
+async function toggleVoiceCall() {
+  if (activeAsrOwner === "voice-modal") await stopRealtimeAsr()
+  else await startRealtimeAsr("voice-modal")
 }
 
 function trapModalFocus(event) {
@@ -3735,6 +3957,10 @@ byId("quick-note-deck-next").addEventListener("click", () => stepQuickNoteDeck(1
 
 byId("quick-note-input").addEventListener("input", (event) => {
   const length = event.currentTarget.value.length
+  if (!event.currentTarget.value.trim() && pendingQuickNoteVoiceDuration > 0 && activeAsrOwner !== "quick-note") {
+    pendingQuickNoteVoiceDuration = 0
+    byId("quick-note-voice-preview").hidden = true
+  }
   event.currentTarget.style.height = "auto"
   event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`
   byId("quick-note-count").textContent = `${length} / ${QUICK_NOTE_MAX_LENGTH}`
@@ -3757,13 +3983,13 @@ byId("quick-note-image-rights-confirmed").addEventListener("change", (event) => 
     : "图片只在本次页面预览，不会发送给模型"
 })
 byId("quick-note-voice").addEventListener("click", toggleQuickNoteVoiceRecording)
-byId("remove-quick-note-voice").addEventListener("click", () => {
-  clearQuickNoteVoice()
+byId("remove-quick-note-voice").addEventListener("click", async () => {
+  await clearQuickNoteVoice()
   byId("quick-note-status").textContent = "语音已移除，仍可以留下文字或图片"
 })
-byId("quick-note-form").addEventListener("submit", (event) => {
+byId("quick-note-form").addEventListener("submit", async (event) => {
   event.preventDefault()
-  if (quickNoteVoiceStartedAt) toggleQuickNoteVoiceRecording()
+  if (activeAsrOwner === "quick-note") await stopRealtimeAsr()
   const input = byId("quick-note-input")
   if (!input.value.trim() && !pendingQuickNoteImage && pendingQuickNoteVoiceDuration === 0) return
   if (!saveQuickNote(
@@ -3919,18 +4145,24 @@ byId("chat-back").addEventListener("click", () => {
   }
 })
 byId("chat-input").addEventListener("input", (event) => {
+  if (!event.currentTarget.value.trim()) chatDraftFromVoice = false
   byId("send-chat").disabled = flow.chatBusy || event.currentTarget.value.trim().length === 0
 })
-byId("voice-input").addEventListener("click", toggleVoiceInputDemo)
+byId("voice-input").addEventListener("click", toggleVoiceInput)
 byId("open-voice-mode").addEventListener("click", openVoiceMode)
-byId("chat-form").addEventListener("submit", (event) => {
+byId("chat-form").addEventListener("submit", async (event) => {
   event.preventDefault()
-  sendChatMessage(byId("chat-input").value)
+  if (["chat", "voice-modal"].includes(activeAsrOwner)) await stopRealtimeAsr()
+  await sendChatMessage(byId("chat-input").value)
 })
 document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
-  button.addEventListener("click", () => sendChatMessage(button.dataset.chatPrompt))
+  button.addEventListener("click", async () => {
+    if (["chat", "voice-modal"].includes(activeAsrOwner)) await stopRealtimeAsr({ cancel: true })
+    await sendChatMessage(button.dataset.chatPrompt, { inputMode: "text" })
+  })
 })
 byId("chat-crisis-help").addEventListener("click", () => {
+  if (["chat", "voice-modal"].includes(activeAsrOwner)) cancelActiveAsrImmediately(activeAsrOwner)
   cancelRuntimeTimers()
   if (chatAbortController) {
     chatAbortController.abort()
@@ -4075,9 +4307,7 @@ onboardingModal.addEventListener("click", (event) => {
 })
 
 byId("close-voice-mode").addEventListener("click", closeVoiceMode)
-byId("voice-call-toggle").addEventListener("click", (event) => {
-  setVoiceCallState(event.currentTarget.getAttribute("aria-pressed") !== "true")
-})
+byId("voice-call-toggle").addEventListener("click", toggleVoiceCall)
 voiceModal.addEventListener("click", (event) => {
   if (event.target === voiceModal) closeVoiceMode()
 })
@@ -4091,10 +4321,10 @@ document.addEventListener("keydown", (event) => {
     closeQuickNoteComposer()
     return
   }
-  if (quickNoteVoiceStartedAt && event.key === "Escape") {
+  if (activeAsrOwner === "quick-note" && event.key === "Escape") {
     event.preventDefault()
-    clearQuickNoteVoice()
-    byId("quick-note-status").textContent = "已取消这次语音录制"
+    void clearQuickNoteVoice()
+    byId("quick-note-status").textContent = "已取消实时语音转写"
     return
   }
   if (!voiceModal.hidden && event.key === "Escape") {
@@ -4128,6 +4358,14 @@ document.addEventListener("keydown", (event) => {
     return
   }
   trapModalFocus(event)
+})
+window.addEventListener("pagehide", () => {
+  if (activeAsrSession) cancelActiveAsrImmediately(activeAsrOwner)
+})
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && activeAsrSession) {
+    cancelActiveAsrImmediately(activeAsrOwner)
+  }
 })
 
 quickNoteRecords = loadStoredQuickNotes()

@@ -305,7 +305,7 @@
           <header class="flow-header">
             <button class="back-button" id="chat-back" type="button" aria-label="返回上一页">←</button>
             <span class="prototype-pill">情绪陪伴 · AI</span>
-            <button class="icon-button voice-mode-trigger" id="open-voice-mode" type="button" aria-label="打开语音对话演示">
+            <button class="icon-button voice-mode-trigger" id="open-voice-mode" type="button" aria-label="打开实时语音转写">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
           </header>
@@ -331,7 +331,7 @@
 
           <form class="chat-composer" id="chat-form">
             <label class="sr-only" for="chat-input">想对潮伴说的话</label>
-            <button class="voice-input-button" id="voice-input" type="button" aria-label="开始语音输入演示" aria-pressed="false">
+            <button class="voice-input-button" id="voice-input" type="button" aria-label="开始实时语音转写" aria-pressed="false">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
             <textarea id="chat-input" rows="1" maxlength="400" placeholder="此刻最想说的是……"></textarea>
@@ -513,7 +513,7 @@
               <input class="sr-only" id="quick-note-camera-input" type="file" accept="image/*" capture="environment" />
               <label class="sr-only" for="quick-note-input">此刻想记下什么？</label>
               <textarea id="quick-note-input" maxlength="200" rows="1" placeholder="留下一点此刻的想法……"></textarea>
-              <button class="quick-note-voice-button" id="quick-note-voice" type="button" aria-label="开始录制语音闪念" aria-pressed="false">
+              <button class="quick-note-voice-button" id="quick-note-voice" type="button" aria-label="开始实时语音转写闪念" aria-pressed="false">
                 <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
               </button>
               <button class="quick-note-send-button" id="save-quick-note" type="submit" aria-label="提交闪念" disabled>↑</button>
@@ -702,10 +702,10 @@
           <section class="settings-card">
             <h2>你的内容与偏好</h2>
             <dl>
-              <div><dt>随手闪念</dt><dd>文字、日期和表达类型保存在本机；原图只在本次页面使用，只有逐图确认处理权利后才会用于持续画像</dd></div>
+              <div><dt>随手闪念</dt><dd>文字、日期和表达类型保存在本机；图片与录音不落盘，图片需逐图授权，语音只保存用户确认提交的转写文字</dd></div>
               <div><dt>章节选择</dt><dd>仅用于本次对话开场与建议，离开后清除</dd></div>
               <div><dt>潮笺卡槽</dt><dd>点击「收进卡槽」后，只保存内置卡片编号与收藏时间</dd></div>
-              <div><dt>陪伴对话</dt><dd>文字仅在本次页面内存保留并按次直达自定义模型服务商；语音当前为前端演示</dd></div>
+              <div><dt>陪伴对话</dt><dd>录音时音频实时直达讯飞并转成可编辑文字；只有主动发送后才进入对话与持续画像，原音频不落盘</dd></div>
               <div><dt>多模态文字画像</dt><dd>仅在单独授权后保存在本机；包含图片与文本形成的文字观察，不保存图片文件</dd></div>
               <div><dt>API 配置</dt><dd>地址、模型名和 Key 只保存在当前设备；清除站点数据也会移除</dd></div>
               <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
@@ -724,7 +724,7 @@
           </section>
           <section class="settings-card subtle-card">
             <h2>原型版本</h2>
-            <p>V0.6 · 融合答案之书、多模态闪念、语音交互演示、纯前端自定义 API、多模态文字画像与画像混合叙事。</p>
+            <p>V0.7 · 融合实时语音转写、多模态闪念、纯前端自定义 API、多模态文字画像与画像混合叙事。</p>
           </section>
         </section>
 
@@ -752,11 +752,11 @@
 
         <div class="modal-backdrop voice-modal-backdrop" id="voice-modal" hidden>
           <section class="voice-modal" role="dialog" aria-modal="true" aria-labelledby="voice-modal-title">
-            <button class="modal-close" id="close-voice-mode" type="button" aria-label="关闭语音对话演示">×</button>
-            <p class="eyebrow">VOICE COMPANION · UI DEMO</p>
+            <button class="modal-close" id="close-voice-mode" type="button" aria-label="关闭实时语音转写">×</button>
+            <p class="eyebrow">VOICE COMPANION · LIVE ASR</p>
             <h2 id="voice-modal-title">用声音，慢慢说。</h2>
-            <p>这个版本只演示语音对话的界面与状态，不会调用麦克风。</p>
-            <button class="voice-call-orb" id="voice-call-toggle" type="button" aria-pressed="false" aria-label="开始语音对话演示">
+            <p>音频会实时直达讯飞并转成当前对话的可编辑文字；发送前不会进入对话或画像，原音频不在本机保存。</p>
+            <button class="voice-call-orb" id="voice-call-toggle" type="button" aria-pressed="false" aria-label="开始实时语音转写">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
             <p class="voice-call-status" id="voice-call-status" role="status">准备好时，点一下开始</p>
