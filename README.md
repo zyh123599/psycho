@@ -1,74 +1,66 @@
-# psycho
+# 心潮
 
-「心潮」心理叙事产品原型。
+「心潮」是一个 Ionic + Capacitor 心理叙事原型。当前 V0.6 为纯前端实现：仓库中不再包含 FastAPI、Python 服务或服务端数据库。
 
-## 原型版本
+当前体验位于 [`prototype/`](prototype/)，包含：
 
-| 版本 | 目录 | 体验重点 |
-| --- | --- | --- |
-| V0.1 | [`prototype-v1/`](prototype-v1/) | Reigns 式二元选择卡与公开四维状态，作为冻结对比基线 |
-| 当前 V0.5 | [`prototype/`](prototype/) | V0.4 完整体验 + FastAPI 多模态持续画像、支持性 AI 对话和画像驱动内容 |
+- 文字与图片共同参与的持续反思画像；
+- 画像驱动的主题、日报、行动、回响与六张叙事卡；
+- 支持性 AI 对话；
+- 网络不可用或未授权时的完整本地降级流程；
+- 潮笺与未来回响的本机存储。
 
-`prototype-v1/` 只作为冻结对比基线；后续产品设计都在 `prototype/` 增量更新，不再为每个小版本复制新目录。当前 `prototype/` 同时作为 Ionic + Capacitor 应用的 Web 源码；具体数据处理和安全边界见目录 README。
+这些内容用于自我梳理，不是心理诊断、治疗、危机评估或专业服务。
 
-## FastAPI 后端
-
-多模态、非诊断性反思画像与支持性对话后端位于 [`backend/`](backend/)，使用 Python 3.12、uv、
-FastAPI 和 Pydantic v2。它支持文本、图片、App 结构化交互信号与无持久化对话，并已提供 Swagger/ReDoc、
-完整 API 文档和可复用的前端调用示例：
+## 启动
 
 ```bash
-cd backend
-uv sync --all-groups
-uv run uvicorn psycho_backend.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-详细配置、安全边界和启动方式见 [`backend/README.md`](backend/README.md)，前端接口契约见
-[`backend/docs/API.md`](backend/docs/API.md)。真实模型密钥只放在被 Git 忽略的 `backend/.env`，
-不能写入网页或 Android 包。
-
-## Ionic + Capacitor 应用
-
-当前 V0.5 已按 Capacitor 官方的 Ionic 集成流程整理为跨平台项目：
-
-- `prototype/`：HTML/CSS/JavaScript 界面源码
-- `dist/`：Vite 生成的 Web 构建产物，不提交到 Git
-- `capacitor.config.json`：应用名、应用 ID 和 Web 资源目录
-- `.github/workflows/mobile-build.yml`：在云端临时生成 Android、iOS 工程并打包
-
-仓库不保存 `android/` 和 `ios/` 目录。每次移动端构建都由 GitHub Actions 根据
-Capacitor 配置重新生成原生工程，避免在仓库里维护大量平台文件。
-
-应用 ID 为 `com.xinchao.psycho`。首次拉取代码后安装依赖：
-
-```bash
-npm install
-cp prototype/.env.example prototype/.env
-```
-
-本地浏览器默认连接 `http://127.0.0.1:8000`。Capacitor 真机/生产构建需把
-`VITE_API_BASE_URL` 配置为设备可访问的 HTTPS FastAPI 地址；不要把中转站密钥放进前端环境变量。
-
-### Web 开发
-
-```bash
+npm ci
 npm run dev
+```
+
+构建与测试：
+
+```bash
+npm run test:frontend
 npm run build
 ```
 
-### GitHub Actions 移动端打包
+Vite 以 `prototype/` 为入口，生产文件输出到 `dist/`。Capacitor 的 `webDir` 也是 `dist/`。
 
-进入 GitHub 仓库的 **Actions → Build mobile apps → Run workflow**，一次运行会并行生成：
+## 配置自定义 API
 
-- `xinchao-android-debug`：包含可安装的 Android 调试 APK
-- `xinchao-ios-simulator`：包含可在 iOS Simulator 运行的 `.app` 压缩包
+启动前端后打开「我的 → 自定义模型 API」，填写：
 
-推送名称以 `v` 开头的 Git 标签（例如 `v0.1.0`）也会自动触发构建。完成后在该次
-Action 页面底部的 **Artifacts** 区域下载产物。
+1. OpenAI 兼容的 Base URL，例如 `https://provider.example/v1`；
+2. API Key；
+3. 服务商实际提供的模型名；
+4. 图片理解精度。
 
-iOS 真机安装包和 App Store 包必须使用 Apple 证书及 Provisioning Profile 签名。
-当前工作流不保存签名密钥，因此默认产出无需签名的模拟器版本；Android 默认产出调试版 APK。
+先点「测试当前表单」，再点「保存到本机」。地址、模型名和 API Key 只写入当前站点的 `localStorage`，不会进入源码或构建产物。前端会直接访问自定义服务商的 `/models` 与 `/chat/completions`。
 
-项目已安装 Ionic Framework，以及官方指南推荐的 `app`、`haptics`、`keyboard`、
-`status-bar` 四个 Capacitor 插件。相关命令来自
-[Using Capacitor with Ionic Framework](https://capacitorjs.com/docs/getting-started/with-ionic)。
+浏览器直连有三个硬性条件：
+
+- 服务商必须允许 `Origin`、`Authorization` 和 `Content-Type` 的 CORS 预检；
+- HTTPS 页面只能访问 HTTPS API，不能访问 HTTP 中转站；
+- 本地保存的 API Key 能被同源脚本、浏览器扩展或持有该设备的人读取，因此不要在公共设备上保存高权限 Key。
+
+完整兼容契约见 [`prototype/CUSTOM_API.md`](prototype/CUSTOM_API.md)。
+
+## 本机数据边界
+
+| 数据 | 持久化位置 | 说明 |
+| --- | --- | --- |
+| 自定义 API 配置 | `localStorage` | Base URL、模型、图片精度和 API Key；可在「我的」清除 |
+| 多模态文字画像 | `localStorage` | 保存模型从文字、图片内容与互动形成的结构化文字观察；不保存原图 |
+| 潮笺卡槽 | `localStorage` | 只保存内置卡片 ID 和收藏时间 |
+| 未来回响 | `localStorage` | 仅在用户明确勾选后保存 |
+| 闪念、原图、聊天原文、章节选择 | 页面内存 | 刷新或离开当前流程后消失；授权调用时会发送给自定义模型服务商 |
+
+画像更新采用异步单飞队列：同一时间只运行一个请求，新变化合并到下一次更新；相同证据使用不可逆指纹去重；撤销授权或删除画像会取消在途请求并阻止迟到结果重新写入。
+
+## 目录
+
+- [`prototype/`](prototype/)：当前 V0.6 应用与测试；
+- [`dist/`](dist/)：构建产物；
+- [`prototype/DESIGN_PLAN_DEARAURA.md`](prototype/DESIGN_PLAN_DEARAURA.md)：早期设计研究记录，不代表当前数据架构。

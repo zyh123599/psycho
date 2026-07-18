@@ -193,6 +193,7 @@
             <div class="chapter-glyph" aria-hidden="true"><i></i><b>◐</b></div>
             <p>今天想一起看见</p>
             <h1 id="overview-title" tabindex="-1">在反复确认之前，<br />先听见自己</h1>
+            <p class="overview-narrative-intro" id="overview-narrative-intro">这六个情境会沿着本次线索展开，没有标准答案。</p>
           </div>
 
           <blockquote class="confirmed-theme" id="overview-theme"></blockquote>
@@ -215,6 +216,7 @@
           </ol>
 
           <div class="boundary-note"><span aria-hidden="true">i</span><p>选择只用于调整本次对话开场和建议，不判断人格或心理状况。</p></div>
+          <p class="narrative-status" id="narrative-status" role="status">当前使用内置叙事。</p>
 
           <div class="sticky-footer">
             <button class="primary-button" id="overview-start" type="button">
@@ -479,18 +481,57 @@
             <h1 id="settings-title" tabindex="-1">我的</h1>
             <p>你决定留下什么，也可以随时把它带走。</p>
           </div>
+          <section class="settings-card custom-api-card">
+            <div class="settings-title-row">
+              <div><h2>自定义模型 API</h2><p>浏览器直接调用 OpenAI 兼容端点，不再经过心潮后端。</p></div>
+              <span class="ai-endpoint-label">仅本机</span>
+            </div>
+            <div class="custom-api-form">
+              <label class="api-field" for="custom-api-base-url">
+                <span>API Base URL</span>
+                <input id="custom-api-base-url" data-custom-api-field type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://your-provider.example/v1" />
+                <small>填写到版本路径，例如 <code>https://example.com/v1</code></small>
+              </label>
+              <label class="api-field" for="custom-api-key">
+                <span>API Key</span>
+                <input id="custom-api-key" data-custom-api-field type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-…" />
+                <small>会以 Bearer Token 发送，只保存在当前浏览器/设备。</small>
+              </label>
+              <div class="api-field-row">
+                <label class="api-field" for="custom-api-model">
+                  <span>模型名称</span>
+                  <input id="custom-api-model" data-custom-api-field type="text" autocomplete="off" spellcheck="false" value="gpt-5.6-sol" />
+                </label>
+                <label class="api-field" for="custom-api-image-detail">
+                  <span>图片理解精度</span>
+                  <select id="custom-api-image-detail" data-custom-api-field>
+                    <option value="high">高</option>
+                    <option value="auto">自动</option>
+                    <option value="low">低（更省 token）</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <p class="api-security-note"><strong>请留意：</strong>前端本地保存的 Key 可被同设备上的脚本或扩展读取，不适合公共设备。端点必须允许浏览器 CORS；HTTPS 页面也不能调用 HTTP 地址。</p>
+            <p class="profile-sync-status" id="custom-api-status" role="status">尚未配置自定义 API。</p>
+            <div class="settings-actions api-settings-actions">
+              <button class="secondary-button" id="custom-api-test" type="button">测试当前表单</button>
+              <button class="primary-button" id="custom-api-save" type="button"><span>保存到本机</span><span aria-hidden="true">→</span></button>
+              <button class="danger-text-button" id="custom-api-clear" type="button">清除 API 配置</button>
+            </div>
+          </section>
           <section class="settings-card ai-settings-card">
             <div class="settings-title-row">
-              <div><h2>AI 与持续画像</h2><p>两项授权彼此独立，关闭后立即停止新的网络请求。</p></div>
-              <span class="ai-endpoint-label">FastAPI</span>
+              <div><h2>AI 与持续画像</h2><p>先保存上面的 API 配置；两项授权彼此独立，关闭后立即停止新的请求。</p></div>
+              <span class="ai-endpoint-label">Direct API</span>
             </div>
             <label class="settings-toggle" for="ai-service-consent">
               <input id="ai-service-consent" type="checkbox" />
-              <span><strong>按次使用 AI 服务</strong><small>发送当次聊天或明确选中的材料；服务端不持久化请求正文</small></span>
+              <span><strong>按次使用 AI 服务</strong><small>把当次聊天或明确选中的材料直接发送到你配置的模型服务商</small></span>
             </label>
             <label class="settings-toggle" for="ai-profile-consent">
               <input id="ai-profile-consent" type="checkbox" disabled />
-              <span><strong>持续更新本机画像</strong><small>在关键节点后台合并更新；只在本机保存去除证据原文的结构化结果</small></span>
+              <span><strong>持续更新本机画像</strong><small>关键节点异步合并文字、图片理解与互动；只保存文字化结果，不保存原图</small></span>
             </label>
             <p class="profile-sync-status" id="settings-ai-status" role="status">尚未启用持续画像</p>
             <article class="settings-profile-preview" id="settings-profile-preview" hidden>
@@ -499,7 +540,7 @@
               <div id="settings-profile-summary"></div>
               <small id="settings-profile-time"></small>
             </article>
-            <button class="secondary-button full-width" id="settings-clear-profile" type="button" disabled>删除本机结构化画像</button>
+            <button class="secondary-button full-width" id="settings-clear-profile" type="button" disabled>删除本机多模态文字画像</button>
           </section>
           <section class="settings-card">
             <h2>本地与隐私</h2>
@@ -507,8 +548,9 @@
               <div><dt>闪念便贴</dt><dd>仅在本次页面中使用，不持久保存</dd></div>
               <div><dt>章节选择</dt><dd>仅用于本次对话开场与建议，离开后清除</dd></div>
               <div><dt>潮笺卡槽</dt><dd>点击「收进卡槽」后，只保存内置卡片编号与收藏时间</dd></div>
-              <div><dt>陪伴对话</dt><dd>仅在本次页面内存保留；启用 AI 时按次发送，后端不建立会话存储</dd></div>
-              <div><dt>结构化画像</dt><dd>仅在单独授权后保存在本机；证据观察原文会在写入前移除</dd></div>
+              <div><dt>陪伴对话</dt><dd>仅在本次页面内存保留；启用 AI 时按次直达自定义模型服务商</dd></div>
+              <div><dt>多模态文字画像</dt><dd>仅在单独授权后保存在本机；包含图片与文本形成的文字观察，不保存图片文件</dd></div>
+              <div><dt>API 配置</dt><dd>地址、模型名和 Key 只保存在当前设备；清除站点数据也会移除</dd></div>
               <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
             </dl>
             <div class="settings-actions">
@@ -523,7 +565,7 @@
           </section>
           <section class="settings-card subtle-card">
             <h2>原型版本</h2>
-            <p>V0.5 · 已接入 FastAPI 多模态画像与支持性 AI 对话。未授权或网络异常时保留本地降级流程。</p>
+            <p>V0.6 · 纯前端自定义 API、多模态文字画像、画像混合叙事与支持性 AI 对话。未授权或网络异常时保留本地降级流程。</p>
           </section>
         </section>
 
@@ -542,13 +584,15 @@
             <h2 id="ai-consent-title">由你决定，哪些内容可以交给 AI。</h2>
             <p id="ai-consent-reason">此功能需要按次调用 AI 服务。</p>
             <ul>
-              <li>模型请求由 FastAPI 后端代发，App 中不包含模型密钥。</li>
-              <li>服务端不持久化本次原始文本、图片或对话。</li>
+              <li>浏览器会把请求直接发送到你在“我的”中配置的模型服务商。</li>
+              <li>心潮不设后端；API 配置和文字画像只保存在这台设备。</li>
+              <li>原图与聊天只在本次页面内存使用，但模型服务商会收到本次授权内容。</li>
               <li>这不是心理诊断、治疗或危机评估；你可以随时关闭。</li>
             </ul>
+            <p class="api-config-warning" id="ai-consent-config-warning" hidden>请先关闭此窗口，到“我的”保存并测试自定义 API。</p>
             <label class="ai-profile-consent-row" id="ai-profile-consent-row" for="consent-profile-personalization">
               <input id="consent-profile-personalization" type="checkbox" />
-              <span><strong>另外开启持续画像</strong><small>关键节点异步更新，并在本机保存可删除的结构化画像；不默认勾选</small></span>
+              <span><strong>另外开启持续画像</strong><small>关键节点异步更新，并在本机保存可删除的多模态文字画像；不默认勾选</small></span>
             </label>
             <div class="ai-consent-actions">
               <button class="text-button" id="decline-ai-consent" type="button">继续使用本地功能</button>

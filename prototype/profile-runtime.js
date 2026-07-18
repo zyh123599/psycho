@@ -2,7 +2,7 @@ import { analyzeProfile, getCapabilities } from "./api-client.js"
 
 export const AI_CONSENT_STORAGE_KEY = "xinchao.ai-consent.v1"
 export const PROFILE_STORAGE_KEY = "xinchao.reflective-profile.v1"
-export const AI_POLICY_VERSION = "2026-07-18"
+export const AI_POLICY_VERSION = "2026-07-18-local-api"
 
 export const DEFAULT_API_CAPABILITIES = Object.freeze({
   max_images: 4,
@@ -17,9 +17,11 @@ const DEFAULT_CONSENT = Object.freeze({
   policyVersion: AI_POLICY_VERSION
 })
 
+const PIPELINE_META_PATTERN = /(本次没有新增|第一人称近况|此前获授权|此前摘要|主要依据仍是|用于画像的|较稳妥的更新|延续轻量|把是否展开|交给用户决定)/
+
 function readJson(key) {
   try {
-    const raw = window.localStorage.getItem(key)
+    const raw = globalThis.localStorage?.getItem(key)
     return raw ? JSON.parse(raw) : null
   } catch (_error) {
     return null
@@ -28,8 +30,8 @@ function readJson(key) {
 
 function writeJson(key, value) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value))
-    return true
+    globalThis.localStorage?.setItem(key, JSON.stringify(value))
+    return Boolean(globalThis.localStorage)
   } catch (_error) {
     return false
   }
@@ -37,7 +39,7 @@ function writeJson(key, value) {
 
 function removeStored(key) {
   try {
-    window.localStorage.removeItem(key)
+    globalThis.localStorage?.removeItem(key)
     return true
   } catch (_error) {
     return false
@@ -55,10 +57,86 @@ function normalizeConsent(value) {
   }
 }
 
+function compactText(value, maxLength = 1200, fallback = "") {
+  if (typeof value !== "string") return fallback
+  const cleaned = value.trim().replace(/\s+/g, " ").slice(0, maxLength)
+  return cleaned || fallback
+}
+
+function withoutPipelineMeta(value, fallback = "") {
+  const text = compactText(value, 1600)
+  if (!text) return fallback
+  const sentences = text.split(/(?<=[。！？!?])\s*/)
+  const kept = sentences.filter((sentence) => !PIPELINE_META_PATTERN.test(sentence))
+  return compactText(kept.join(""), 1200, fallback)
+}
+
+function uniqueStrings(items, limit, maxLength = 120) {
+  const result = []
+  Array.from(items || []).forEach((item) => {
+    const normalized = compactText(item, maxLength)
+    if (normalized && !result.includes(normalized)) result.push(normalized)
+  })
+  return result.slice(0, limit)
+}
+
+function insightEvidenceIds(insight) {
+  if (Array.isArray(insight?.evidence_source_ids)) return insight.evidence_source_ids
+  if (Array.isArray(insight?.evidence)) {
+    return insight.evidence.map((item) => item?.source_id)
+  }
+  return []
+}
+
+function sanitizeInsight(insight) {
+  if (!insight || typeof insight !== "object") return null
+  const title = withoutPipelineMeta(insight.title)
+  if (!title) return null
+  const confidence = ["low", "medium", "high"].includes(insight.confidence)
+    ? insight.confidence
+    : "low"
+  return {
+    title: title.slice(0, 120),
+    description: withoutPipelineMeta(insight.description).slice(0, 500),
+    confidence,
+    uncertainty: withoutPipelineMeta(insight.uncertainty).slice(0, 300),
+    evidence_source_ids: uniqueStrings(insightEvidenceIds(insight), 6, 100)
+  }
+}
+
+function sanitizeInsights(items) {
+  return Array.from(items || []).map(sanitizeInsight).filter(Boolean).slice(0, 4)
+}
+
+function sanitizeMultimodalObservation(item) {
+  if (!item || typeof item !== "object") return null
+  const observation = withoutPipelineMeta(item.observation)
+  const contribution = withoutPipelineMeta(item.contribution_to_profile)
+  if (!observation || !contribution) return null
+  return {
+    source_ids: uniqueStrings(item.source_ids, 4, 100),
+    modality: item.modality === "cross_modal" ? "cross_modal" : "image",
+    observation: observation.slice(0, 600),
+    contribution_to_profile: contribution.slice(0, 600),
+    uncertainty: withoutPipelineMeta(item.uncertainty).slice(0, 300)
+  }
+}
+
+function sanitizeAction(item) {
+  if (!item || typeof item !== "object") return null
+  const action = withoutPipelineMeta(item.action)
+  if (!action) return null
+  return {
+    title: withoutPipelineMeta(item.title, "一小步").slice(0, 100),
+    action: action.slice(0, 220),
+    rationale: withoutPipelineMeta(item.rationale).slice(0, 300)
+  }
+}
+
 function validStoredProfile(value) {
   return Boolean(
     value &&
-    value.local_profile_version === "1.0" &&
+    value.local_profile_version === "2.0" &&
     typeof value.profile_id === "string" &&
     typeof value.generated_at === "string" &&
     value.profile &&
@@ -67,49 +145,120 @@ function validStoredProfile(value) {
   )
 }
 
-function stripInsightEvidence(insight) {
+function migrateStoredProfile(value) {
+  if (validStoredProfile(value)) return value
+  if (!value || value.local_profile_version !== "1.0" || !value.profile) return null
+  const profile = value.profile
+  const headline = withoutPipelineMeta(profile.headline)
+  const summary = withoutPipelineMeta(profile.summary)
+  if (!headline || !summary) return null
   return {
-    title: insight.title,
-    description: insight.description,
-    confidence: insight.confidence,
-    uncertainty: insight.uncertainty,
-    evidence_source_ids: Array.isArray(insight.evidence)
-      ? insight.evidence.map((item) => item.source_id).filter(Boolean)
-      : []
+    local_profile_version: "2.0",
+    profile_id: value.profile_id,
+    generated_at: value.generated_at,
+    model: value.model || "unknown",
+    modalities_used: uniqueStrings(value.modalities_used, 3, 30),
+    last_evidence_fingerprint: null,
+    profile: {
+      analysis_status: profile.analysis_status === "sufficient" ? "sufficient" : "limited",
+      headline,
+      summary,
+      current_state: sanitizeInsights(profile.current_state),
+      recurring_patterns: sanitizeInsights(profile.recurring_patterns),
+      strengths_and_resources: sanitizeInsights(profile.strengths_and_resources),
+      needs_and_preferences: sanitizeInsights(profile.needs_and_preferences),
+      multimodal_observations: [],
+      communication_preferences: uniqueStrings(profile.communication_preferences, 5, 160),
+      gentle_actions: Array.from(profile.gentle_actions || []).map(sanitizeAction).filter(Boolean).slice(0, 4),
+      reflection_questions: uniqueStrings(profile.reflection_questions, 4, 220),
+      uncertainties: uniqueStrings(profile.uncertainties, 6, 240)
+    }
   }
 }
 
-function sanitizeProfileEnvelope(response) {
-  const profile = response.profile
-  const mapInsights = (items) => Array.isArray(items) ? items.map(stripInsightEvidence) : []
+function sanitizeProfileEnvelope(response, fingerprint, previousEnvelope) {
+  const profile = response.profile || {}
+  const previousModalities = Array.isArray(previousEnvelope?.modalities_used)
+    ? previousEnvelope.modalities_used
+    : []
+  const fallbackSummary = "这份暂时性画像会随着你之后主动提供的线索继续修正。"
+  const headline = withoutPipelineMeta(profile.headline, "一份仍可继续修正的当下观察")
+  const summary = withoutPipelineMeta(profile.summary, fallbackSummary)
   return {
-    local_profile_version: "1.0",
+    local_profile_version: "2.0",
     profile_id: response.profile_id,
     generated_at: response.generated_at,
     model: response.model,
-    modalities_used: Array.isArray(response.modalities_used) ? response.modalities_used : [],
+    modalities_used: uniqueStrings([
+      ...previousModalities,
+      ...(Array.isArray(response.modalities_used) ? response.modalities_used : [])
+    ], 3, 30),
+    last_evidence_fingerprint: fingerprint,
+    profile: {
+      analysis_status: profile.analysis_status === "sufficient" ? "sufficient" : "limited",
+      headline,
+      summary,
+      current_state: sanitizeInsights(profile.current_state),
+      recurring_patterns: sanitizeInsights(profile.recurring_patterns),
+      strengths_and_resources: sanitizeInsights(profile.strengths_and_resources),
+      needs_and_preferences: sanitizeInsights(profile.needs_and_preferences),
+      multimodal_observations: Array.from(profile.multimodal_observations || [])
+        .map(sanitizeMultimodalObservation)
+        .filter(Boolean)
+        .slice(0, 8),
+      communication_preferences: uniqueStrings(profile.communication_preferences, 5, 160),
+      gentle_actions: Array.from(profile.gentle_actions || [])
+        .map(sanitizeAction)
+        .filter(Boolean)
+        .slice(0, 4),
+      reflection_questions: uniqueStrings(profile.reflection_questions, 4, 220),
+      uncertainties: uniqueStrings(profile.uncertainties, 6, 240)
+    }
+  }
+}
+
+function stableSerialize(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`
+  return `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => (
+    `${JSON.stringify(key)}:${stableSerialize(value[key])}`
+  )).join(",")}}`
+}
+
+export function evidenceFingerprint(value) {
+  const text = stableSerialize(value)
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    first ^= code
+    first = Math.imul(first, 0x01000193)
+    second ^= code + index
+    second = Math.imul(second, 0x85ebca6b)
+  }
+  return `v1-${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}`
+}
+
+export function profileContextForModel(envelope) {
+  if (!envelope?.profile) return null
+  const profile = envelope.profile
+  return {
+    profile_id: envelope.profile_id,
+    generated_at: envelope.generated_at,
+    modalities_used: Array.isArray(envelope.modalities_used) ? envelope.modalities_used : [],
     profile: {
       analysis_status: profile.analysis_status,
       headline: profile.headline,
       summary: profile.summary,
-      current_state: mapInsights(profile.current_state),
-      recurring_patterns: mapInsights(profile.recurring_patterns),
-      strengths_and_resources: mapInsights(profile.strengths_and_resources),
-      needs_and_preferences: mapInsights(profile.needs_and_preferences),
-      communication_preferences: Array.isArray(profile.communication_preferences)
-        ? profile.communication_preferences.slice(0, 5)
-        : [],
-      gentle_actions: Array.isArray(profile.gentle_actions)
-        ? profile.gentle_actions.map((item) => ({
-          title: item.title,
-          action: item.action,
-          rationale: item.rationale
-        }))
-        : [],
-      reflection_questions: Array.isArray(profile.reflection_questions)
-        ? profile.reflection_questions.slice(0, 4)
-        : [],
-      uncertainties: Array.isArray(profile.uncertainties) ? profile.uncertainties.slice(0, 6) : []
+      current_state: profile.current_state || [],
+      recurring_patterns: profile.recurring_patterns || [],
+      strengths_and_resources: profile.strengths_and_resources || [],
+      needs_and_preferences: profile.needs_and_preferences || [],
+      multimodal_observations: profile.multimodal_observations || [],
+      communication_preferences: profile.communication_preferences || [],
+      gentle_actions: profile.gentle_actions || [],
+      reflection_questions: profile.reflection_questions || [],
+      uncertainties: profile.uncertainties || []
     }
   }
 }
@@ -120,50 +269,55 @@ export class ProfileRuntime {
     this.onProfile = onProfile
     this.onStatus = onStatus
     this.consent = normalizeConsent(readJson(AI_CONSENT_STORAGE_KEY))
-    const stored = readJson(PROFILE_STORAGE_KEY)
-    this.profileEnvelope = validStoredProfile(stored) ? stored : null
+    const migrated = migrateStoredProfile(readJson(PROFILE_STORAGE_KEY))
+    this.profileEnvelope = migrated
+    if (migrated) writeJson(PROFILE_STORAGE_KEY, migrated)
     this.capabilities = { ...DEFAULT_API_CAPABILITIES }
     this.running = null
     this.queuedReason = null
     this.controller = null
+    this.generation = 0
   }
 
   async initialize() {
-    try {
-      const capabilities = await getCapabilities({ timeoutMs: 5000 })
-      this.capabilities = {
-        ...DEFAULT_API_CAPABILITIES,
-        ...capabilities,
-        accepted_image_types: Array.isArray(capabilities.accepted_image_types)
-          ? capabilities.accepted_image_types
-          : DEFAULT_API_CAPABILITIES.accepted_image_types
-      }
-    } catch (_error) {
-      this.capabilities = { ...DEFAULT_API_CAPABILITIES }
+    const capabilities = await getCapabilities()
+    this.capabilities = {
+      ...DEFAULT_API_CAPABILITIES,
+      ...capabilities,
+      accepted_image_types: Array.isArray(capabilities.accepted_image_types)
+        ? capabilities.accepted_image_types
+        : DEFAULT_API_CAPABILITIES.accepted_image_types
     }
     const message = this.consent.profilePersonalization
-      ? (this.profileEnvelope ? "已加载本机结构化画像" : "持续画像已启用，等待新的可用线索")
+      ? (this.profileEnvelope ? "已加载本机多模态文字画像" : "持续画像已启用，等待新的可用线索")
       : (this.consent.serviceProcessing ? "AI 服务已启用；持续画像未启用" : "AI 尚未启用")
     this.onStatus({ state: "idle", message })
     return this.capabilities
   }
 
   setConsent(changes) {
+    const previous = this.consent
     this.consent = normalizeConsent({ ...this.consent, ...changes, prompted: true })
     writeJson(AI_CONSENT_STORAGE_KEY, this.consent)
-    if (!this.consent.serviceProcessing) {
+    const revoked = previous.serviceProcessing && !this.consent.serviceProcessing
+      || previous.profilePersonalization && !this.consent.profilePersonalization
+    if (revoked) {
       this.queuedReason = null
-      if (this.controller) this.controller.abort()
+      this.generation += 1
+      this.controller?.abort()
     }
     this.onStatus({ state: "consent", message: "AI 授权设置已更新" })
     return this.consent
   }
 
   clearProfile() {
+    this.queuedReason = null
+    this.generation += 1
+    this.controller?.abort()
     this.profileEnvelope = null
     removeStored(PROFILE_STORAGE_KEY)
     this.onProfile(null, "cleared", null)
-    this.onStatus({ state: "idle", message: "本机结构化画像已删除" })
+    this.onStatus({ state: "idle", message: "本机多模态文字画像已删除" })
   }
 
   refresh(reason = "interaction") {
@@ -181,7 +335,8 @@ export class ProfileRuntime {
 
   async #run(reason) {
     this.controller = new AbortController()
-    this.onStatus({ state: "updating", message: "正在后台更新本机画像…", reason })
+    const generation = this.generation
+    this.onStatus({ state: "updating", message: "正在后台更新本机多模态文字画像…", reason })
     try {
       const request = this.snapshot({
         reason,
@@ -192,11 +347,26 @@ export class ProfileRuntime {
         this.onStatus({ state: "idle", message: "目前没有新的可用线索", reason })
         return null
       }
+      const fingerprint = request.evidenceFingerprint || evidenceFingerprint({
+        texts: request.payload?.texts || [],
+        signals: request.payload?.signals || [],
+        image_source_ids: (request.images || []).map((image) => image?.sourceId || null)
+      })
+      if (fingerprint === this.profileEnvelope?.last_evidence_fingerprint) {
+        this.onStatus({ state: "idle", message: "画像已是最新，没有重复发送相同线索", reason })
+        return this.profileEnvelope
+      }
       const response = await analyzeProfile({
-        ...request,
+        payload: request.payload,
+        images: request.images,
         signal: this.controller.signal
       })
-      if (!this.consent.profilePersonalization) return null
+      if (
+        generation !== this.generation ||
+        !this.consent.serviceProcessing ||
+        !this.consent.profilePersonalization
+      ) return null
+
       const safetyLevel = response.profile?.safety_notice?.level
       if (safetyLevel && safetyLevel !== "not_indicated") {
         this.queuedReason = null
@@ -208,53 +378,47 @@ export class ProfileRuntime {
         })
         return null
       }
-      const sanitized = sanitizeProfileEnvelope(response)
+      const sanitized = sanitizeProfileEnvelope(response, fingerprint, this.profileEnvelope)
       this.profileEnvelope = sanitized
       writeJson(PROFILE_STORAGE_KEY, sanitized)
       this.onProfile(sanitized, reason, response)
       this.onStatus({
         state: "ready",
-        message: "画像已在后台更新；原始输入未写入本机画像",
+        message: "画像已更新；保存的是图片与文本形成的文字观察，不保存原图",
         reason,
         generatedAt: sanitized.generated_at
       })
       return sanitized
     } catch (error) {
       if (error && (error.name === "AbortError" || error.code === "client_aborted")) {
-        this.onStatus({ state: "idle", message: "画像更新已取消", reason })
+        if (generation === this.generation) {
+          this.onStatus({ state: "idle", message: "画像更新已取消", reason })
+        }
         return null
       }
-      this.onStatus({
-        state: "error",
-        message: error && error.message ? error.message : "画像更新暂时失败",
-        reason,
-        error
-      })
+      if (generation === this.generation) {
+        this.onStatus({
+          state: "error",
+          message: error?.message || "画像更新暂时失败",
+          reason,
+          error
+        })
+      }
       return null
     } finally {
       this.controller = null
       this.running = null
       const queued = this.queuedReason
       this.queuedReason = null
-      if (queued && this.consent.profilePersonalization) {
-        window.queueMicrotask(() => this.refresh(queued))
+      if (queued && this.consent.profilePersonalization && generation === this.generation) {
+        globalThis.queueMicrotask(() => this.refresh(queued))
       }
     }
   }
 }
 
-function uniqueStrings(items, limit, maxLength = 120) {
-  const result = []
-  items.forEach((item) => {
-    if (typeof item !== "string") return
-    const normalized = item.trim().replace(/\s+/g, " ").slice(0, maxLength)
-    if (normalized && !result.includes(normalized)) result.push(normalized)
-  })
-  return result.slice(0, limit)
-}
-
 export function deriveThemeCandidates(envelope, fallback = []) {
-  const profile = envelope && envelope.profile
+  const profile = envelope?.profile
   if (!profile) return fallback.slice(0, 3)
   const titled = [
     ...(profile.current_state || []),
@@ -269,7 +433,7 @@ export function deriveThemeCandidates(envelope, fallback = []) {
 }
 
 export function deriveProfileActions(envelope) {
-  const actions = envelope && envelope.profile && envelope.profile.gentle_actions
+  const actions = envelope?.profile?.gentle_actions
   if (!Array.isArray(actions)) return []
   return actions.slice(0, 3).map((item, index) => ({
     id: `profile-action-${index}`,
@@ -280,7 +444,7 @@ export function deriveProfileActions(envelope) {
 }
 
 export function deriveProfileReport(envelope, date) {
-  const profile = envelope && envelope.profile
+  const profile = envelope?.profile
   if (!profile) return null
   const insights = [
     ...(profile.current_state || []),
@@ -299,13 +463,13 @@ export function deriveProfileReport(envelope, date) {
     dominant: "profile",
     personalized: true,
     profileDriven: true,
-    mode: "AI 画像日报 · 本机",
+    mode: envelope.modalities_used?.includes("image") ? "多模态画像日报 · 本机" : "AI 画像日报 · 本机",
     date
   }
 }
 
 export function deriveProfileEchoes(envelope) {
-  const profile = envelope && envelope.profile
+  const profile = envelope?.profile
   if (!profile) return []
   const strengths = (profile.strengths_and_resources || []).map((item) => item.title)
   return uniqueStrings([
@@ -315,7 +479,7 @@ export function deriveProfileEchoes(envelope) {
 }
 
 export function companionProfileContext(envelope) {
-  const profile = envelope && envelope.profile
+  const profile = envelope?.profile
   if (!profile) return null
   return {
     profile_id: envelope.profile_id,
@@ -325,6 +489,28 @@ export function companionProfileContext(envelope) {
     communication_preferences: profile.communication_preferences || [],
     needs_and_preferences: (profile.needs_and_preferences || []).map((item) => item.title),
     gentle_actions: (profile.gentle_actions || []).map((item) => item.action),
+    multimodal_observations: (profile.multimodal_observations || []).slice(0, 4).map((item) => ({
+      contribution_to_profile: item.contribution_to_profile,
+      uncertainty: item.uncertainty
+    })),
+    uncertainties: profile.uncertainties || []
+  }
+}
+
+export function narrativeProfileContext(envelope) {
+  const profile = envelope?.profile
+  if (!profile) return null
+  return {
+    headline: profile.headline,
+    summary: profile.summary,
+    current_state: (profile.current_state || []).map((item) => item.title),
+    strengths_and_resources: (profile.strengths_and_resources || []).map((item) => item.title),
+    needs_and_preferences: (profile.needs_and_preferences || []).map((item) => item.title),
+    communication_preferences: profile.communication_preferences || [],
+    multimodal_observations: (profile.multimodal_observations || []).slice(0, 5).map((item) => ({
+      contribution_to_profile: item.contribution_to_profile,
+      uncertainty: item.uncertainty
+    })),
     uncertainties: profile.uncertainties || []
   }
 }
