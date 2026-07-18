@@ -2,6 +2,9 @@
 
 const STORAGE_KEY = "xinchao.future-echoes.v1"
 const CARD_STORAGE_KEY = "xinchao.tide-cards.v1"
+const QUICK_NOTE_STORAGE_KEY = "xinchao.quick-notes.v1"
+const QUICK_NOTE_MAX_LENGTH = 200
+const QUICK_NOTE_LIMIT = 50
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const cards = [
@@ -323,7 +326,7 @@ const rightPreview = byId("right-preview")
 const safetyModal = byId("safety-modal")
 const tideModal = byId("tide-modal")
 const cardDetailModal = byId("card-detail-modal")
-const topLevelScreens = new Set(["today-screen", "chat-screen", "cards-screen", "echoes-screen", "settings-screen"])
+const topLevelScreens = new Set(["today-screen", "thoughts-screen", "chat-screen", "cards-screen", "echoes-screen", "settings-screen"])
 
 function createFreshFlow() {
   return {
@@ -422,6 +425,10 @@ function showScreen(screenOrId, options = {}) {
     renderTodayReport()
   }
   if (target.id === "report-screen") renderDailyReport()
+  if (target.id === "thoughts-screen") {
+    renderQuickNotes()
+    byId("quick-note-status").textContent = "不会自动进入日报、画像或聊天"
+  }
   if (target.id === "chat-screen") renderChat()
   if (target.id === "cards-screen") renderTideCardLibrary()
   if (target.id === "echoes-screen") renderEchoLibrary()
@@ -429,8 +436,9 @@ function showScreen(screenOrId, options = {}) {
   if (options.focus !== false) focusScreenHeading(target)
 }
 
-function startNewFlow() {
+function startFlow(seedNote = "") {
   flow = createFreshFlow()
+  if (seedNote.trim()) flow.notes = [seedNote.trim().slice(0, 120), ""]
   locked = false
   dragging = false
   tideModal.hidden = true
@@ -438,8 +446,12 @@ function startNewFlow() {
   byId("custom-theme").value = ""
   byId("custom-echo").value = ""
   byId("save-echo").checked = false
-  renderNotes()
+  renderNotes(seedNote.trim() ? 1 : -1)
   showScreen("notes-screen")
+}
+
+function startNewFlow() {
+  startFlow()
 }
 
 function countFilledNotes() {
@@ -1224,6 +1236,169 @@ function showEchoScreen() {
   updateEchoSelection()
 }
 
+function isValidQuickNoteRecord(record) {
+  return Boolean(
+    record &&
+    typeof record.id === "string" &&
+    typeof record.text === "string" &&
+    record.text.trim().length > 0 &&
+    record.text.length <= QUICK_NOTE_MAX_LENGTH &&
+    Number.isFinite(record.createdAt)
+  )
+}
+
+function readQuickNotes() {
+  try {
+    const raw = window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const seen = new Set()
+    return parsed
+      .filter((record) => {
+        if (!isValidQuickNoteRecord(record) || seen.has(record.id)) return false
+        seen.add(record.id)
+        return true
+      })
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, QUICK_NOTE_LIMIT)
+  } catch (_error) {
+    return []
+  }
+}
+
+function writeQuickNotes(records) {
+  try {
+    window.localStorage.setItem(QUICK_NOTE_STORAGE_KEY, JSON.stringify(records.slice(0, QUICK_NOTE_LIMIT)))
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+function formatQuickNoteDate(timestamp) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(timestamp))
+}
+
+function saveQuickNote(text) {
+  const normalized = text.trim()
+  if (!normalized) return false
+  const now = Date.now()
+  const randomPart = Math.random().toString(36).slice(2, 9)
+  const record = {
+    id: `note-${now}-${randomPart}`,
+    text: normalized.slice(0, QUICK_NOTE_MAX_LENGTH),
+    createdAt: now
+  }
+  return writeQuickNotes([record, ...readQuickNotes()])
+}
+
+function removeQuickNote(id) {
+  const records = readQuickNotes()
+  const next = records.filter((record) => record.id !== id)
+  if (next.length === records.length) return
+  if (writeQuickNotes(next)) {
+    byId("quick-note-status").textContent = "已删除这张便签"
+    renderQuickNotes()
+    updateSettingsStorageState()
+  }
+}
+
+function requestRemoveQuickNote(id, button) {
+  if (button.dataset.confirming === "true") {
+    removeQuickNote(id)
+    return
+  }
+  button.dataset.confirming = "true"
+  button.textContent = "确认删除"
+  button.setAttribute("aria-label", "再次点击，确认删除这张闪念便签")
+  schedule(() => {
+    if (!button.isConnected) return
+    button.dataset.confirming = "false"
+    button.textContent = "删除"
+    button.setAttribute("aria-label", "删除这张闪念便签")
+  }, 4000)
+}
+
+function renderQuickNotes() {
+  const records = readQuickNotes()
+  const list = byId("quick-note-list")
+  list.replaceChildren()
+
+  records.forEach((record) => {
+    const article = document.createElement("article")
+    article.className = "quick-note-card"
+
+    const meta = document.createElement("div")
+    meta.className = "quick-note-card-meta"
+    const label = document.createElement("span")
+    label.textContent = "闪念便签"
+    const time = document.createElement("time")
+    time.dateTime = new Date(record.createdAt).toISOString()
+    time.textContent = formatQuickNoteDate(record.createdAt)
+    meta.append(label, time)
+
+    const content = document.createElement("blockquote")
+    content.textContent = record.text
+
+    const actions = document.createElement("div")
+    actions.className = "quick-note-card-actions"
+    const useButton = document.createElement("button")
+    useButton.className = "quick-note-use"
+    useButton.type = "button"
+    useButton.textContent = "用它开始梳理"
+    useButton.addEventListener("click", () => startFlow(record.text))
+    const removeButton = document.createElement("button")
+    removeButton.className = "quick-note-delete"
+    removeButton.type = "button"
+    removeButton.textContent = "删除"
+    removeButton.setAttribute("aria-label", "删除这张闪念便签")
+    removeButton.addEventListener("click", () => requestRemoveQuickNote(record.id, removeButton))
+    actions.append(useButton, removeButton)
+
+    article.append(meta, content, actions)
+    list.append(article)
+  })
+
+  byId("quick-note-total").textContent = `${records.length} 张`
+  byId("quick-note-empty").hidden = records.length > 0
+}
+
+function clearAllQuickNotes(event) {
+  const records = readQuickNotes()
+  if (records.length === 0) {
+    renderQuickNotes()
+    updateSettingsStorageState()
+    return
+  }
+
+  const button = event && event.currentTarget instanceof HTMLButtonElement
+    ? event.currentTarget
+    : null
+  if (button && button.dataset.confirming !== "true") {
+    const original = button.textContent
+    button.dataset.confirming = "true"
+    button.textContent = "再次点击，确认清空闪念"
+    schedule(() => {
+      if (!button.isConnected) return
+      button.dataset.confirming = "false"
+      button.textContent = original
+    }, 4000)
+    return
+  }
+
+  if (writeQuickNotes([])) {
+    byId("quick-note-status").textContent = "已清空留在本机的闪念"
+    renderQuickNotes()
+    updateSettingsStorageState()
+  }
+}
+
 function makeEchoRecord(text, days) {
   const now = Date.now()
   const randomPart = Math.random().toString(36).slice(2, 9)
@@ -1573,6 +1748,13 @@ function updateDueEchoCard() {
 }
 
 function updateSettingsStorageState() {
+  const quickNoteButton = byId("settings-clear-quick-notes")
+  const quickNoteCount = readQuickNotes().length
+  quickNoteButton.disabled = quickNoteCount === 0
+  quickNoteButton.textContent = quickNoteCount === 0
+    ? "没有已保存的闪念"
+    : `清空已保存闪念（${quickNoteCount}）`
+
   const button = byId("settings-clear-echoes")
   const count = readEchoes().length
   button.disabled = count === 0
@@ -1641,6 +1823,10 @@ document.querySelectorAll("[data-open-safety]").forEach((button) => {
 
 byId("start-flow").addEventListener("click", startNewFlow)
 byId("restart-flow").addEventListener("click", startNewFlow)
+byId("open-quick-notes").addEventListener("click", () => {
+  showScreen("thoughts-screen")
+  window.requestAnimationFrame(() => byId("quick-note-input").focus({ preventScroll: true }))
+})
 byId("open-chat").addEventListener("click", () => openStandaloneChat({ reset: true }))
 byId("open-daily-report").addEventListener("click", () => showScreen("report-screen"))
 byId("report-back").addEventListener("click", () => showScreen("today-screen"))
@@ -1654,6 +1840,29 @@ document.querySelectorAll("[data-report-feedback]").forEach((button) => {
       ? "收到。之后会继续保持这种低负担、可解释的表达。"
       : "收到。这不会被当成你的问题，之后会降低这类推断的权重。"
   })
+})
+
+byId("quick-note-input").addEventListener("input", (event) => {
+  const length = event.currentTarget.value.length
+  byId("quick-note-count").textContent = `${length} / ${QUICK_NOTE_MAX_LENGTH}`
+  byId("save-quick-note").disabled = event.currentTarget.value.trim().length === 0
+  byId("quick-note-status").textContent = "不会自动进入日报、画像或聊天"
+})
+byId("quick-note-form").addEventListener("submit", (event) => {
+  event.preventDefault()
+  const input = byId("quick-note-input")
+  if (!input.value.trim()) return
+  if (!saveQuickNote(input.value)) {
+    byId("quick-note-status").textContent = "这台浏览器暂时无法保存，请检查本地存储权限"
+    return
+  }
+  input.value = ""
+  byId("quick-note-count").textContent = `0 / ${QUICK_NOTE_MAX_LENGTH}`
+  byId("save-quick-note").disabled = true
+  byId("quick-note-status").textContent = "已经收好；只有你主动选择时，它才会进入章节"
+  renderQuickNotes()
+  updateSettingsStorageState()
+  input.focus({ preventScroll: true })
 })
 
 byId("notes-back").addEventListener("click", () => showScreen("today-screen"))
@@ -1851,6 +2060,7 @@ byId("echo-back").addEventListener("click", showActionScreen)
 byId("finish-flow").addEventListener("click", finishFlow)
 
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
+byId("settings-clear-quick-notes").addEventListener("click", clearAllQuickNotes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-tide-cards").addEventListener("click", clearAllTideCards)
 

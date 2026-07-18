@@ -38,6 +38,11 @@
           </article>
 
           <div class="home-entry-grid">
+            <button class="home-entry note-entry" id="open-quick-notes" type="button">
+              <span class="home-entry-icon" aria-hidden="true">＋</span>
+              <span><strong>随手记下一个闪念</strong><small>零碎想法 · 只留在本机</small></span>
+              <i aria-hidden="true">→</i>
+            </button>
             <button class="home-entry primary-entry" id="start-flow" type="button">
               <span class="home-entry-icon" aria-hidden="true">◐</span>
               <span><strong>走一段今日章节</strong><small>闪念 · 选择 · 潮笺</small></span>
@@ -408,6 +413,45 @@
           <button class="primary-button light-button" id="restart-flow" type="button"><span>再走一次</span><span aria-hidden="true">↻</span></button>
         </section>
 
+        <section class="screen library-screen thoughts-screen" id="thoughts-screen" aria-labelledby="thoughts-title" hidden>
+          <header class="app-header">
+            <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
+            <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
+          </header>
+
+          <div class="screen-heading library-heading thoughts-heading">
+            <p class="eyebrow">QUICK THOUGHTS</p>
+            <h1 id="thoughts-title" tabindex="-1">闪念</h1>
+            <p>先把掠过脑海的一句话放下来，不必整理，也不用马上进入章节。</p>
+          </div>
+
+          <form class="quick-note-composer" id="quick-note-form">
+            <label for="quick-note-input">此刻想记下什么？</label>
+            <textarea id="quick-note-input" maxlength="200" rows="4" placeholder="一句话、一个画面，或还说不清的感受……"></textarea>
+            <div class="quick-note-meta">
+              <span id="quick-note-count">0 / 200</span>
+              <span>明确保存后才会留在本机</span>
+            </div>
+            <button class="primary-button" id="save-quick-note" type="submit" disabled><span>收好这张便签</span><span aria-hidden="true">↓</span></button>
+            <p class="form-hint" id="quick-note-status" role="status">不会自动进入日报、画像或聊天</p>
+          </form>
+
+          <section class="quick-note-library" aria-labelledby="quick-note-library-title">
+            <div class="quick-note-library-heading">
+              <h2 id="quick-note-library-title">留在这台设备上的闪念</h2>
+              <span id="quick-note-total">0 张</span>
+            </div>
+            <div class="quick-note-list" id="quick-note-list" aria-live="polite"></div>
+            <div class="empty-state quick-note-empty" id="quick-note-empty">
+              <span aria-hidden="true">＋</span>
+              <h2>还没有留下便签</h2>
+              <p>想到什么就写一点。之后也可以主动选择一张，带它进入章节继续梳理。</p>
+            </div>
+          </section>
+
+          <p class="quick-note-privacy"><span aria-hidden="true">⌁</span>便签默认只保存在当前浏览器；你可以单张删除，也可以在「我的」中全部清空。</p>
+        </section>
+
         <section class="screen library-screen card-slot-screen" id="cards-screen" aria-labelledby="cards-title" hidden>
           <header class="app-header">
             <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
@@ -466,16 +510,19 @@
           <section class="settings-card">
             <h2>本地与隐私</h2>
             <dl>
-              <div><dt>闪念便贴</dt><dd>仅在本次页面中使用，不持久保存</dd></div>
+              <div><dt>随手闪念</dt><dd>只有点击「收好这张便签」后才保存在本机；不会自动用于日报、画像或聊天</dd></div>
+              <div><dt>章节闪念</dt><dd>仅在本次页面中使用，不持久保存</dd></div>
               <div><dt>章节选择</dt><dd>仅用于本次对话开场与建议，离开后清除</dd></div>
               <div><dt>潮笺卡槽</dt><dd>点击「收进卡槽」后，只保存内置卡片编号与收藏时间</dd></div>
               <div><dt>陪伴对话</dt><dd>当前原型仅在页面内存运行；正式接入前需明确服务端保存期限</dd></div>
               <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
             </dl>
             <div class="settings-actions">
+              <button class="secondary-button" id="settings-clear-quick-notes" type="button">没有已保存的闪念</button>
               <button class="secondary-button" id="settings-clear-tide-cards" type="button">卡槽目前为空</button>
               <button class="secondary-button" id="settings-clear-echoes" type="button">删除全部已保存回响</button>
             </div>
+            <button class="ghost-button full-width" type="button" data-nav-target="echoes-screen">打开未来回响</button>
           </section>
           <section class="settings-card">
             <h2>体验边界</h2>
@@ -484,15 +531,15 @@
           </section>
           <section class="settings-card subtle-card">
             <h2>原型版本</h2>
-            <p>V0.4 · 新增今日潮汐日报与情绪陪伴对话。当前演示不连接后端；正式版本需单独获得聊天与个性化数据授权。</p>
+            <p>V0.4 · 新增独立闪念便签、今日潮汐日报与情绪陪伴对话。当前演示不连接后端；正式版本需单独获得聊天与个性化数据授权。</p>
           </section>
         </section>
 
         <nav class="bottom-nav" id="bottom-nav" aria-label="主要导航">
           <button type="button" data-nav-target="today-screen" aria-current="page"><span aria-hidden="true">◐</span><strong>今天</strong></button>
+          <button type="button" data-nav-target="thoughts-screen"><span aria-hidden="true">＋</span><strong>闪念</strong></button>
           <button class="chat-nav-button" type="button" data-nav-target="chat-screen"><span aria-hidden="true">◌</span><strong>对话</strong></button>
           <button type="button" data-nav-target="cards-screen"><span aria-hidden="true">▱</span><strong>卡槽</strong></button>
-          <button type="button" data-nav-target="echoes-screen"><span aria-hidden="true">⌁</span><strong>回响</strong></button>
           <button type="button" data-nav-target="settings-screen"><span aria-hidden="true">○</span><strong>我的</strong></button>
         </nav>
 

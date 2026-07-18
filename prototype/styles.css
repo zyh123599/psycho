@@ -249,6 +249,8 @@ h1[tabindex="-1"]:focus { outline: none; }
 .home-entry strong { font-family: Georgia, "Songti SC", serif; font-size: 13px; font-weight: 500; }
 .home-entry small { margin-top: 2px; color: var(--ink-faint); font-size: 8px; }
 .home-entry i { color: var(--forest); font-style: normal; }
+.note-entry { border-color: rgba(182,145,78,.22); background: rgba(239,220,177,.38); }
+.note-entry .home-entry-icon { color: var(--ink); background: var(--gold); }
 .chat-entry .home-entry-icon { color: #fff4e8; background: #856a8f; }
 .privacy-line { margin: 9px 0 0; color: var(--ink-faint); font-size: 9px; text-align: center; }
 .due-echo-card { display: flex; gap: 12px; align-items: center; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.5); }
@@ -647,6 +649,32 @@ h1[tabindex="-1"]:focus { outline: none; }
 
 /* Library and settings */
 .library-screen, .settings-screen { padding-bottom: calc(104px + env(safe-area-inset-bottom)); background: radial-gradient(circle at 85% 0, rgba(216,187,120,.14), transparent 25%), var(--cream); }
+.thoughts-screen { background: radial-gradient(circle at 12% 3%, rgba(216,187,120,.22), transparent 30%), var(--cream); }
+.thoughts-heading { margin-top: 22px; }
+.quick-note-composer { margin-top: 17px; padding: 17px; border: 1px solid rgba(160,119,59,.2); border-radius: 23px; background: linear-gradient(145deg, #f3e2b9, #ead4a2); box-shadow: 0 13px 28px rgba(89,67,31,.12); }
+.quick-note-composer label { display: block; color: var(--ink); font-family: Georgia, "Songti SC", serif; font-size: 16px; }
+.quick-note-composer textarea { width: 100%; min-height: 108px; margin: 12px 0 0; padding: 13px; resize: vertical; border: 1px solid rgba(86,67,34,.13); border-radius: 15px; outline: none; color: var(--ink); background: rgba(255,252,242,.7); font-family: Georgia, "Songti SC", serif; font-size: 14px; line-height: 1.65; }
+.quick-note-composer textarea:focus { border-color: rgba(49,92,79,.52); box-shadow: 0 0 0 3px rgba(49,92,79,.09); }
+.quick-note-meta { display: flex; justify-content: space-between; margin: 7px 2px 11px; color: rgba(24,37,32,.58); font-size: 8px; }
+.quick-note-composer .primary-button { width: 100%; }
+.quick-note-composer .form-hint { margin: 8px 0 0; text-align: center; }
+.quick-note-library { margin-top: 24px; }
+.quick-note-library-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.quick-note-library-heading h2 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 18px; font-weight: 500; }
+.quick-note-library-heading span { color: var(--ink-faint); font-size: 9px; }
+.quick-note-list { display: grid; gap: 10px; margin-top: 12px; }
+.quick-note-card { position: relative; padding: 15px; overflow: hidden; border: 1px solid rgba(153,119,62,.18); border-radius: 4px 18px 18px 18px; background: linear-gradient(150deg, #fff8e9, #f4e5c5); box-shadow: 0 10px 22px rgba(74,57,29,.09); }
+.quick-note-card::after { position: absolute; top: -19px; right: -17px; width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.24); content: ""; }
+.quick-note-card-meta { position: relative; z-index: 1; display: flex; justify-content: space-between; color: #8e7445; font-size: 8px; font-weight: 750; letter-spacing: .06em; }
+.quick-note-card blockquote { position: relative; z-index: 1; margin: 13px 0 15px; color: var(--ink); font-family: Georgia, "Songti SC", serif; font-size: 15px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quick-note-card-actions { position: relative; z-index: 1; display: flex; gap: 8px; align-items: center; }
+.quick-note-card-actions button { min-height: 37px; padding: 0 12px; border-radius: 12px; cursor: pointer; font-size: 9px; font-weight: 750; }
+.quick-note-use { flex: 1; border: 0; color: #fffaf0; background: var(--forest); }
+.quick-note-delete { border: 1px solid rgba(169,95,86,.2); color: var(--danger); background: rgba(255,255,255,.45); }
+.quick-note-empty { margin-top: 12px; padding: 24px 18px; }
+.quick-note-empty > span { font-size: 28px; }
+.quick-note-privacy { display: flex; gap: 8px; margin: 14px 2px 0; color: var(--ink-faint); font-size: 9px; line-height: 1.55; }
+.quick-note-privacy span { color: var(--forest); }
 .library-heading { margin-top: 30px; }
 .library-heading h1 { font-size: 42px; }
 .card-slot-summary { margin-top: 19px; padding: 14px 15px; border: 1px solid rgba(49,92,79,.14); border-radius: 18px; background: rgba(255,255,255,.5); }
@@ -694,6 +722,7 @@ button.slot-card { cursor: pointer; }
 .settings-card dt { color: var(--ink); font-size: 12px; font-weight: 750; }
 .settings-card dd { margin: 3px 0 0; color: var(--ink-faint); font-size: 10px; line-height: 1.45; }
 .settings-actions { display: grid; gap: 8px; }
+.settings-card > .ghost-button { margin-top: 10px; }
 .settings-actions .secondary-button { width: 100%; }
 .subtle-card { opacity: .78; }
 
