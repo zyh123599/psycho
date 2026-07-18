@@ -1,12 +1,38 @@
+import {
+  ApiError,
+  clearApiSettings,
+  generateMonthlyReflection,
+  generateNarrative,
+  hasApiSettings,
+  loadApiSettings,
+  saveApiSettings,
+  sendCompanionMessage,
+  testApiConnection
+} from "./api-client.js"
+import {
+  ProfileRuntime,
+  companionProfileContext,
+  deriveProfileActions,
+  deriveProfileEchoes,
+  deriveProfileReport,
+  deriveThemeCandidates,
+  evidenceFingerprint,
+  narrativeProfileContext,
+  profileContextForModel
+} from "./profile-runtime.js"
+
 "use strict"
 
 const STORAGE_KEY = "xinchao.future-echoes.v1"
 const CARD_STORAGE_KEY = "xinchao.tide-cards.v1"
 const QUICK_NOTE_MAX_LENGTH = 200
-const QUICK_NOTE_LIMIT = 50
+const QUICK_NOTE_LIMIT = 365
+const QUICK_NOTE_STORAGE_KEY = "xinchao.quick-notes.v1"
+const MONTHLY_MEMORY_STORAGE_KEY = "xinchao.monthly-memory.v1"
 const ANSWER_BOOK_STORAGE_KEY = "xinchao.answer-book.v1"
 const ONBOARDING_STORAGE_KEY = "xinchao.onboarding.v1"
 const QUICK_NOTE_IMAGE_MAX_DATA_LENGTH = 650000
+const REPORT_FEEDBACK_STORAGE_KEY = "xinchao.report-feedback.v1"
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const answerBookCards = [
@@ -24,7 +50,7 @@ const answerBookCards = [
   "先问自己想守住什么，再决定需要放下什么。"
 ]
 
-const cards = [
+const defaultCards = [
   {
     speaker: "叙事向导 · 林岚",
     role: "陪你换一个角度",
@@ -134,6 +160,8 @@ const cards = [
     }
   }
 ]
+
+let cards = defaultCards
 
 const genericThemes = [
   "我想看看，为什么总担心自己做得不够好",
@@ -344,6 +372,8 @@ const leftPreview = byId("left-preview")
 const rightPreview = byId("right-preview")
 const onboardingModal = byId("onboarding-modal")
 const voiceModal = byId("voice-modal")
+const safetyModal = byId("safety-modal")
+const aiConsentModal = byId("ai-consent-modal")
 const tideModal = byId("tide-modal")
 const cardDetailModal = byId("card-detail-modal")
 const topLevelScreens = new Set(["today-screen", "thoughts-screen", "chat-screen", "cards-screen", "echoes-screen", "settings-screen"])
@@ -353,9 +383,16 @@ function createFreshFlow() {
   return {
     notes: ["", ""],
     personalizeNotes: true,
+    images: [],
+    profiledImageSignatures: [],
+    imageRightsConfirmed: false,
+    imageError: "",
     themeCandidates: [],
     selectedTheme: "",
     themeSource: "",
+    narrativeState: "fallback",
+    narrativeMessage: "当前使用内置叙事；配置并启用 AI 后可结合画像生成。",
+    narrativeRequest: 0,
     currentCard: 0,
     choices: Array(cards.length).fill(null),
     signals: { certainty: 0, rest: 0, connection: 0, agency: 0 },
@@ -368,7 +405,9 @@ function createFreshFlow() {
     chatMode: "standalone",
     chatMessages: [],
     chatBusy: false,
+    chatCrisis: false,
     chatSeed: "",
+    chatSuggestedPrompts: [],
     selectedAction: "",
     selectedEcho: "",
     echoSource: "",
@@ -393,11 +432,28 @@ let pendingQuickNoteImage = ""
 let pendingQuickNoteVoiceDuration = 0
 let quickNoteVoiceStartedAt = 0
 let quickNoteRecordingTimer = null
+const profiledQuickNoteImageSourceIds = new Set()
 let voiceInputActive = false
 let ephemeralAnswerRecord = null
 let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 let memorySelectedDateKey = ""
+let memoryReflectionAbortController = null
+let memoryReflectionRequest = 0
+let memoryReflectionRunningFingerprint = ""
+const memoryReflectionFailedFingerprints = new Set()
+let aiConsentReturnFocus = null
+let pendingAiConsentResolution = null
+let pendingAiConsentPromise = null
+let chatAbortController = null
+let narrativeAbortController = null
+let latestProfileStatus = { state: "idle", message: "尚未启用持续画像" }
 const runtimeTimers = new Set()
+
+const profileRuntime = new ProfileRuntime({
+  snapshot: buildProfileSnapshot,
+  onProfile: handleProfileUpdated,
+  onStatus: handleProfileStatus
+})
 
 function schedule(callback, delay) {
   const timer = window.setTimeout(() => {
@@ -411,6 +467,542 @@ function schedule(callback, delay) {
 function cancelRuntimeTimers() {
   runtimeTimers.forEach((timer) => window.clearTimeout(timer))
   runtimeTimers.clear()
+}
+
+function activeProfileEnvelope() {
+  return profileRuntime.consent.profilePersonalization
+    ? profileRuntime.profileEnvelope
+    : null
+}
+
+function readReportFeedback() {
+  try {
+    const value = window.localStorage.getItem(REPORT_FEEDBACK_STORAGE_KEY)
+    return value === "helpful" || value === "not-me" ? value : null
+  } catch (_error) {
+    return null
+  }
+}
+
+function writeReportFeedback(value) {
+  try {
+    window.localStorage.setItem(REPORT_FEEDBACK_STORAGE_KEY, value)
+  } catch (_error) {
+    // 反馈仍在当前界面生效；本地存储不可用时不阻断体验。
+  }
+}
+
+function requestId(prefix) {
+  const random = Math.random().toString(36).slice(2, 9)
+  return `${prefix}-${Date.now().toString(36)}-${random}`
+}
+
+function imageSignature(file) {
+  return [file.name, file.type, file.size, file.lastModified].join(":")
+}
+
+function createImageEntry(file) {
+  return {
+    file,
+    signature: imageSignature(file),
+    sourceId: requestId("image")
+  }
+}
+
+function quickNoteImageEntry(record) {
+  const match = typeof record.imageData === "string"
+    ? record.imageData.match(/^data:([^;,]+);base64,(.+)$/)
+    : null
+  if (!match) return null
+  try {
+    const binary = window.atob(match[2])
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return {
+      file: new Blob([bytes], { type: match[1] }),
+      signature: `quick-note-image:${record.id}`,
+      sourceId: `quick-note-image:${record.id}`,
+      context: "用户主动提交的独立图片闪念；只读取明确文字、作品、物体和语境，不根据人脸、身体、穿着或外貌推断心理属性。"
+    }
+  } catch (_error) {
+    return null
+  }
+}
+
+function profileFocusFor(reason) {
+  const focuses = {
+    notes: "根据用户刚刚主动提供的闪念和图片更新暂时性画像，并给出可供用户自行确认的主题线索。",
+    choices: "结合本章已确认主题和结构化选择信号，更新暂时性画像；不要把卡片选择解释为人格测评。",
+    chat: "结合用户主动允许用于画像的近期对话表达，更新沟通偏好、当下需要和低负担行动。",
+    action: "结合用户主动选择或跳过的微行动，更新可执行偏好；不要把跳过解释为抵抗或问题。",
+    feedback: "结合用户对日报表达方式的反馈调整不确定性和沟通偏好，不推断心理特征。",
+    complete: "为本次章节形成连续但可修正的暂时性反思画像。"
+  }
+  return focuses[reason] || focuses.complete
+}
+
+function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
+  const texts = []
+  const signals = []
+
+  const recentQuickNotes = readQuickNotes().slice(0, 12)
+  recentQuickNotes.slice(0, 6).forEach((record) => {
+    const content = record.text.trim()
+    if (!content) return
+    texts.push({ source_id: `quick-note:${record.id}`, source: "note", content })
+  })
+
+  if (flow.personalizeNotes) {
+    flow.notes.forEach((note, index) => {
+      const content = note.trim()
+      if (!content) return
+      texts.push({ source_id: `note:${index + 1}`, source: "note", content })
+    })
+  }
+
+  if (flow.selectedTheme) {
+    texts.push({ source_id: "theme:confirmed", source: "theme", content: flow.selectedTheme })
+  }
+
+  const userMessages = flow.chatCrisis
+    ? []
+    : flow.chatMessages.filter((message) => message.role === "user").slice(-6)
+  userMessages.forEach((message, index) => {
+    texts.push({
+      source_id: `response:${index + 1}`,
+      source: "response",
+      content: message.text
+    })
+  })
+
+  flow.choices.forEach((choice, index) => {
+    if (!choice) return
+    signals.push({
+      source_id: `choice:${index + 1}`,
+      source: "card_choice",
+      name: `chapter_card_${index + 1}`,
+      value: choice.direction,
+      context: choice.label
+    })
+  })
+
+  if (flow.selectedAction) {
+    const action = currentActionOptions().find((item) => item.id === flow.selectedAction)
+    signals.push({
+      source_id: "action:selected",
+      source: "selected_action",
+      name: "selected_micro_action",
+      value: action ? action.label : "skipped_or_custom",
+      context: action ? action.rationale : "用户没有选择预设行动"
+    })
+  }
+
+  flow.keptTideQuotes.forEach((card, index) => {
+    signals.push({
+      source_id: `tidecard:${index + 1}`,
+      source: "app_interaction",
+      name: "kept_tide_card",
+      value: card.id
+    })
+  })
+
+  const feedback = readReportFeedback()
+  if (feedback) {
+    signals.push({
+      source_id: "report:feedback",
+      source: "app_interaction",
+      name: "daily_report_feedback",
+      value: feedback
+    })
+  }
+
+  const maxImages = Math.max(0, Number(capabilities.max_images) || 0)
+  const quickNoteImages = recentQuickNotes
+    .filter((record) => record.imageRightsConfirmed === true)
+    .map(quickNoteImageEntry)
+    .filter(Boolean)
+  const pendingQuickNoteImages = quickNoteImages
+    .filter((entry) => !profiledQuickNoteImageSourceIds.has(entry.sourceId))
+  const chapterImages = flow.personalizeNotes && flow.imageRightsConfirmed
+    ? flow.images
+      .filter((entry) => !flow.profiledImageSignatures.includes(entry.signature))
+    : []
+  const images = [...pendingQuickNoteImages, ...chapterImages].slice(0, maxImages)
+  const image_contexts = images.map((entry) => ({
+    source_id: entry.sourceId,
+    signature: entry.signature,
+    description: entry.context || "用户主动选择的个人记录图片；只读取其中明确文字、作品、物体或用户给出的语境，不根据人脸、身体、穿着或外貌推断心理属性。"
+  }))
+  const activeImageEvidence = images.map((entry) => ({
+    source_id: entry.sourceId,
+    signature: entry.signature
+  }))
+
+  if (texts.length === 0 && signals.length === 0 && images.length === 0) return null
+  const fingerprint = evidenceFingerprint({
+    texts,
+    signals,
+    active_images: activeImageEvidence
+  })
+  return {
+    evidenceFingerprint: fingerprint,
+    payload: {
+      consent: {
+        profile_generation: true,
+        ai_processing: true,
+        subject_is_requester: true,
+        media_rights_confirmed: images.length > 0
+      },
+      locale: "zh-CN",
+      client_request_id: requestId("profile"),
+      analysis_focus: profileFocusFor(reason),
+      texts,
+      signals,
+      image_contexts,
+      previous_profile_context: profileContextForModel(previousProfile)
+    },
+    images
+  }
+}
+
+function handleProfileStatus(status) {
+  latestProfileStatus = status
+  renderAiState()
+}
+
+function handleProfileUpdated(envelope, _reason, rawResponse) {
+  const safetyLevel = rawResponse?.profile?.safety_notice?.level
+  if (safetyLevel && safetyLevel !== "not_indicated") {
+    openSafety(null)
+    return
+  }
+  if (Array.isArray(rawResponse?.processed_image_source_ids)) {
+    const processed = new Set(rawResponse.processed_image_source_ids)
+    const signatures = flow.images
+      .filter((entry) => processed.has(entry.sourceId))
+      .map((entry) => entry.signature)
+    flow.profiledImageSignatures = [...new Set([...flow.profiledImageSignatures, ...signatures])]
+    processed.forEach((sourceId) => {
+      if (sourceId.startsWith("quick-note-image:")) profiledQuickNoteImageSourceIds.add(sourceId)
+    })
+    const hasPendingQuickNoteImages = readQuickNotes().some((record) => (
+      Boolean(record.imageData) &&
+      record.imageRightsConfirmed === true &&
+      !profiledQuickNoteImageSourceIds.has(`quick-note-image:${record.id}`)
+    ))
+    const hasPendingChapterImages = flow.personalizeNotes && flow.imageRightsConfirmed && flow.images.some((entry) => (
+      !flow.profiledImageSignatures.includes(entry.signature)
+    ))
+    if (hasPendingQuickNoteImages || hasPendingChapterImages) void queueProfileRefresh("notes")
+  }
+  applyProfileToVisibleExperience(envelope)
+}
+
+function applyProfileToVisibleExperience(envelope) {
+  if (!envelope) {
+    renderAiState()
+    renderTodayReport()
+    return
+  }
+  if (activeScreenId === "theme-screen" && !flow.selectedTheme) {
+    flow.themeCandidates = deriveThemeCandidates(envelope, generateLocalThemeCandidates())
+    renderThemeOptions()
+  }
+  if (activeScreenId === "action-screen") renderActionRecommendation()
+  if (activeScreenId === "echo-screen") renderEchoCandidates()
+  if (activeScreenId === "overview-screen" && flow.choices.every((choice) => !choice)) {
+    void generateNarrativeForFlow()
+  }
+  if (activeScreenId === "settings-screen") {
+    renderInitialImpression()
+    renderMemoryArchive()
+  }
+  renderTodayReport()
+  renderAiState()
+}
+
+function queueProfileRefresh(reason) {
+  return profileRuntime.refresh(reason)
+}
+
+function apiSettingsFromForm() {
+  return {
+    baseUrl: byId("custom-api-base-url").value,
+    apiKey: byId("custom-api-key").value,
+    model: byId("custom-api-model").value,
+    imageDetail: byId("custom-api-image-detail").value
+  }
+}
+
+function setApiSettingsStatus(message, state = "idle") {
+  const node = byId("custom-api-status")
+  if (!node) return
+  node.textContent = message
+  node.dataset.state = state
+}
+
+function renderApiSettings() {
+  const settings = loadApiSettings()
+  byId("custom-api-base-url").value = settings.baseUrl
+  byId("custom-api-key").value = settings.apiKey
+  byId("custom-api-model").value = settings.model
+  byId("custom-api-image-detail").value = settings.imageDetail
+  setApiSettingsStatus(
+    hasApiSettings(settings)
+      ? "配置只保存在这台设备；可先测试连接。"
+      : "尚未配置。保存后，浏览器会直接向该端点发送请求。",
+    hasApiSettings(settings) ? "ready" : "idle"
+  )
+}
+
+function saveCustomApiSettings() {
+  try {
+    const settings = saveApiSettings(apiSettingsFromForm())
+    renderApiSettings()
+    setApiSettingsStatus(`已保存到本机：${settings.model}`, "ready")
+    renderAiState()
+    if (activeScreenId === "settings-screen") renderMemoryArchive()
+  } catch (error) {
+    setApiSettingsStatus(error?.message || "配置保存失败", "error")
+  }
+}
+
+async function testCustomApiSettings() {
+  const button = byId("custom-api-test")
+  button.disabled = true
+  setApiSettingsStatus("正在测试地址、鉴权与浏览器跨域访问…", "updating")
+  try {
+    const result = await testApiConnection({ settings: apiSettingsFromForm() })
+    setApiSettingsStatus(
+      result.modelAvailable
+        ? "连接成功，当前模型可用。保存后即可启用 AI。"
+        : "连接成功，但模型列表中未发现当前模型名；请核对后再保存。",
+      result.modelAvailable ? "ready" : "warning"
+    )
+  } catch (error) {
+    setApiSettingsStatus(error?.message || "连接测试失败", "error")
+  } finally {
+    button.disabled = false
+  }
+}
+
+function clearCustomApiSettings() {
+  memoryReflectionAbortController?.abort()
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
+  clearApiSettings()
+  if (profileRuntime.consent.serviceProcessing) {
+    profileRuntime.setConsent({ serviceProcessing: false, profilePersonalization: false })
+  }
+  renderApiSettings()
+  setApiSettingsStatus("本机 API 地址、模型名和 Key 已清除；现有本机画像未自动删除。", "idle")
+  renderAiState()
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
+}
+
+function renderAiState() {
+  const consent = profileRuntime.consent
+  const envelope = profileRuntime.profileEnvelope
+  const serviceToggle = byId("ai-service-consent")
+  const profileToggle = byId("ai-profile-consent")
+  const configured = hasApiSettings()
+  if (serviceToggle) {
+    serviceToggle.checked = consent.serviceProcessing
+    serviceToggle.disabled = !configured
+  }
+  if (profileToggle) {
+    profileToggle.checked = consent.profilePersonalization
+    profileToggle.disabled = !configured || !consent.serviceProcessing
+  }
+
+  const statusNodes = [byId("settings-ai-status"), byId("notes-ai-status")].filter(Boolean)
+  statusNodes.forEach((node) => {
+    node.textContent = latestProfileStatus.message
+    node.dataset.state = latestProfileStatus.state
+  })
+
+  const preview = byId("settings-profile-preview")
+  if (preview) {
+    preview.hidden = !envelope
+    if (envelope) {
+      byId("settings-profile-headline").textContent = envelope.profile.headline
+      byId("settings-profile-summary").textContent = envelope.profile.summary
+      const observationCount = envelope.profile.multimodal_observations?.length || 0
+      const modalityCopy = envelope.modalities_used?.includes("image")
+        ? ` · 含 ${observationCount} 条图片/文本观察`
+        : " · 当前来自文字与互动"
+      byId("settings-profile-time").textContent = `最近更新：${new Intl.DateTimeFormat("zh-CN", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(new Date(envelope.generated_at))}${modalityCopy}`
+    }
+  }
+  const clearButton = byId("settings-clear-profile")
+  if (clearButton) clearButton.disabled = !envelope
+
+  const privacyLine = byId("today-privacy-line")
+  if (privacyLine) {
+    privacyLine.lastChild.textContent = consent.serviceProcessing
+      ? " AI 内容直达你配置的服务商；本机不保存原始聊天 · 随时可以关闭"
+      : " AI 尚未启用；当前使用本地内容 · 随时可以停下"
+  }
+}
+
+function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能" } = {}) {
+  const consent = profileRuntime.consent
+  if (consent.serviceProcessing && (!profileRequested || consent.profilePersonalization)) {
+    return Promise.resolve(consent)
+  }
+  if (pendingAiConsentPromise) return pendingAiConsentPromise
+
+  aiConsentReturnFocus = document.activeElement
+  byId("ai-consent-reason").textContent = reason
+  const configured = hasApiSettings()
+  byId("ai-consent-config-warning").hidden = configured
+  byId("enable-ai-consent").disabled = !configured
+  const profileCheckbox = byId("consent-profile-personalization")
+  profileCheckbox.checked = consent.profilePersonalization
+  byId("ai-profile-consent-row").classList.toggle("is-requested", profileRequested)
+  aiConsentModal.hidden = false
+  window.requestAnimationFrame(() => byId("enable-ai-consent").focus())
+
+  pendingAiConsentPromise = new Promise((resolve) => {
+    pendingAiConsentResolution = resolve
+  })
+  return pendingAiConsentPromise
+}
+
+function closeAiConsent({ accepted }) {
+  if (aiConsentModal.hidden) return
+  const requestedProfile = byId("consent-profile-personalization").checked
+  if (accepted) {
+    profileRuntime.setConsent({
+      serviceProcessing: true,
+      profilePersonalization: requestedProfile
+    })
+  } else {
+    profileRuntime.setConsent({ prompted: true })
+  }
+  aiConsentModal.hidden = true
+  renderAiState()
+  const result = profileRuntime.consent
+  if (pendingAiConsentResolution) pendingAiConsentResolution(result)
+  pendingAiConsentResolution = null
+  pendingAiConsentPromise = null
+  const returnScreen = aiConsentReturnFocus && aiConsentReturnFocus.closest(".screen")
+  if (aiConsentReturnFocus && aiConsentReturnFocus.isConnected && !returnScreen?.hidden) {
+    aiConsentReturnFocus.focus({ preventScroll: true })
+  } else {
+    focusScreenHeading(byId(activeScreenId))
+  }
+  aiConsentReturnFocus = null
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function addNoteImages(fileList) {
+  const capabilities = profileRuntime.capabilities
+  const accepted = new Set(capabilities.accepted_image_types)
+  const maxImages = Number(capabilities.max_images) || 4
+  const maxBytes = Number(capabilities.max_image_bytes) || 8 * 1024 * 1024
+  const next = [...flow.images]
+  const errors = []
+
+  Array.from(fileList).forEach((file) => {
+    if (!accepted.has(file.type)) {
+      errors.push(`${file.name} 格式不支持`)
+      return
+    }
+    if (file.size > maxBytes) {
+      errors.push(`${file.name} 超过 ${formatBytes(maxBytes)}`)
+      return
+    }
+    if (next.length >= maxImages) {
+      errors.push(`最多选择 ${maxImages} 张图片`)
+      return
+    }
+    const signature = imageSignature(file)
+    const duplicate = next.some((item) => item.signature === signature)
+    if (!duplicate) next.push(createImageEntry(file))
+  })
+
+  flow.images = next
+  flow.imageError = errors[0] || ""
+  if (flow.images.length === 0) flow.imageRightsConfirmed = false
+  renderNoteImages()
+}
+
+function renderNoteImages() {
+  const list = byId("note-image-list")
+  if (!list) return
+  list.replaceChildren()
+  flow.images.forEach((entry, index) => {
+    const file = entry.file
+    const item = document.createElement("div")
+    item.className = "note-image-item"
+    const copy = document.createElement("span")
+    const name = document.createElement("strong")
+    name.textContent = file.name
+    const size = document.createElement("small")
+    size.textContent = formatBytes(file.size)
+    copy.append(name, size)
+    const remove = document.createElement("button")
+    remove.type = "button"
+    remove.textContent = "×"
+    remove.setAttribute("aria-label", `移除图片 ${file.name}`)
+    remove.addEventListener("click", () => {
+      flow.images.splice(index, 1)
+      if (flow.images.length === 0) flow.imageRightsConfirmed = false
+      renderNoteImages()
+    })
+    item.append(copy, remove)
+    list.append(item)
+  })
+
+  const rightsRow = byId("image-rights-row")
+  rightsRow.hidden = flow.images.length === 0
+  byId("images-rights-confirmed").checked = flow.imageRightsConfirmed
+  const status = byId("note-image-status")
+  if (flow.imageError) {
+    status.textContent = flow.imageError
+    status.dataset.state = "error"
+  } else if (flow.images.length > 0) {
+    const pendingCount = flow.images.filter((entry) => !flow.profiledImageSignatures.includes(entry.signature)).length
+    status.textContent = pendingCount > 0
+      ? `已选择 ${flow.images.length} 张，其中 ${pendingCount} 张将在授权后发送一次；本机只保存模型形成的文字观察`
+      : `这 ${flow.images.length} 张已形成文字观察；原图仍只在本次页面内存中`
+    status.dataset.state = "ready"
+  } else {
+    status.textContent = `可选，最多 ${profileRuntime.capabilities.max_images} 张；图片不会写入本地存储`
+    status.dataset.state = "idle"
+  }
+}
+
+function renderEchoCandidates() {
+  const candidates = buildEchoCandidates()
+  document.querySelectorAll("[data-echo-index]").forEach((button) => {
+    const index = Number(button.dataset.echoIndex)
+    button.querySelector("strong").textContent = candidates[index] || "今天先不留下结论。"
+  })
+  updateEchoSelection()
+}
+
+function initializeAiIntegration() {
+  renderApiSettings()
+  if (!hasApiSettings() && profileRuntime.consent.serviceProcessing) {
+    profileRuntime.setConsent({ serviceProcessing: false, profilePersonalization: false })
+  }
+  renderAiState()
+  renderNoteImages()
+  profileRuntime.initialize().then(() => {
+    renderNoteImages()
+    renderAiState()
+  })
 }
 
 function focusScreenHeading(screen) {
@@ -466,6 +1058,10 @@ function showScreen(screenOrId, options = {}) {
   const target = typeof screenOrId === "string" ? byId(screenOrId) : screenOrId
   if (!target) return
   if (activeScreenId === "chat-screen" && target.id !== "chat-screen") {
+    if (chatAbortController) {
+      chatAbortController.abort()
+      chatAbortController = null
+    }
     flow.chatBusy = false
     setVoiceInputState(false, { transcribe: false })
     if (flow.chatMode === "standalone") {
@@ -503,6 +1099,9 @@ function showScreen(screenOrId, options = {}) {
 }
 
 function startFlow(seedNote = "") {
+  narrativeAbortController?.abort()
+  narrativeAbortController = null
+  cards = defaultCards
   flow = createFreshFlow()
   if (seedNote.trim()) flow.notes = [seedNote.trim().slice(0, 120), ""]
   locked = false
@@ -513,6 +1112,7 @@ function startFlow(seedNote = "") {
   byId("custom-echo").value = ""
   byId("save-echo").checked = false
   renderNotes(seedNote.trim() ? 1 : -1)
+  renderNoteImages()
   showScreen("notes-screen")
 }
 
@@ -580,7 +1180,7 @@ function renderNotes(focusIndex = -1) {
   }
 }
 
-function generateThemeCandidates() {
+function generateLocalThemeCandidates() {
   if (!flow.personalizeNotes) return [...genericThemes]
 
   const source = flow.notes.map((note) => note.trim().toLowerCase()).join(" ")
@@ -599,6 +1199,12 @@ function generateThemeCandidates() {
     if (!candidates.includes(theme)) candidates.push(theme)
   })
   return candidates.slice(0, 3)
+}
+
+function generateThemeCandidates() {
+  const localCandidates = generateLocalThemeCandidates()
+  if (!flow.personalizeNotes) return localCandidates
+  return deriveThemeCandidates(activeProfileEnvelope(), localCandidates)
 }
 
 function updateThemeControls() {
@@ -624,6 +1230,112 @@ function renderThemeOptions() {
   updateThemeControls()
 }
 
+function narrativeText(value, fallback, maxLength = 300) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().replace(/\s+/g, " ").slice(0, maxLength)
+    : fallback
+}
+
+function mergeGeneratedCards(generatedCards) {
+  return defaultCards.map((fallback, index) => {
+    const generated = generatedCards[index] || {}
+    return {
+      speaker: narrativeText(generated.speaker, fallback.speaker, 40),
+      role: narrativeText(generated.role, fallback.role, 60),
+      portrait: narrativeText(generated.portrait, fallback.portrait, 1),
+      tone: ["guide", "body", "friend", "standard", "future", "self"].includes(generated.tone)
+        ? generated.tone
+        : fallback.tone,
+      prompt: narrativeText(generated.prompt, fallback.prompt, 260),
+      whisper: narrativeText(generated.whisper, fallback.whisper, 180),
+      left: {
+        label: narrativeText(generated.left?.label, fallback.left.label, 40),
+        result: narrativeText(generated.left?.result, fallback.left.result, 160),
+        signals: fallback.left.signals
+      },
+      right: {
+        label: narrativeText(generated.right?.label, fallback.right.label, 40),
+        result: narrativeText(generated.right?.result, fallback.right.result, 160),
+        signals: fallback.right.signals
+      }
+    }
+  })
+}
+
+function renderNarrativeState() {
+  const status = byId("narrative-status")
+  if (status) {
+    status.textContent = flow.narrativeMessage
+    status.dataset.state = flow.narrativeState
+  }
+}
+
+async function generateNarrativeForFlow() {
+  if (!flow.selectedTheme || activeScreenId !== "overview-screen") return null
+  if (flow.choices.some(Boolean)) return null
+  if (!profileRuntime.consent.serviceProcessing || !hasApiSettings()) {
+    flow.narrativeState = "fallback"
+    flow.narrativeMessage = "当前使用内置叙事；可在“我的”配置并启用自定义 API。"
+    renderNarrativeState()
+    return null
+  }
+
+  narrativeAbortController?.abort()
+  narrativeAbortController = new AbortController()
+  const request = ++flow.narrativeRequest
+  const theme = flow.selectedTheme
+  const hadGeneratedCards = flow.narrativeState === "ready"
+  flow.narrativeState = "updating"
+  flow.narrativeMessage = activeProfileEnvelope()
+    ? "正在后台结合本机画像生成这一章；你仍可返回修改主题。"
+    : "正在后台根据本次主题生成这一章；画像准备好后还会继续修正。"
+  renderNarrativeState()
+
+  try {
+    const response = await generateNarrative({
+      theme,
+      profileContext: narrativeProfileContext(activeProfileEnvelope()),
+      signal: narrativeAbortController.signal
+    })
+    if (
+      request !== flow.narrativeRequest ||
+      theme !== flow.selectedTheme ||
+      activeScreenId !== "overview-screen" ||
+      flow.choices.some(Boolean)
+    ) return null
+    cards = mergeGeneratedCards(response.result.cards)
+    flow.choices = Array(cards.length).fill(null)
+    byId("overview-title").textContent = narrativeText(
+      response.result.title,
+      "在反复确认之前，先听见自己",
+      90
+    )
+    byId("overview-narrative-intro").textContent = narrativeText(
+      response.result.intro,
+      "这六个情境会沿着本次线索展开，没有标准答案。",
+      180
+    )
+    const includesImage = activeProfileEnvelope()?.modalities_used?.includes("image")
+    flow.narrativeState = "ready"
+    flow.narrativeMessage = includesImage
+      ? "本章由自定义模型结合本机多模态文字画像生成；潮向规则仍由本地固定逻辑控制。"
+      : "本章由自定义模型结合主题与本机文字画像生成；潮向规则仍由本地固定逻辑控制。"
+    renderNarrativeState()
+    return response
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "client_aborted") return null
+    if (!hadGeneratedCards) cards = defaultCards
+    flow.narrativeState = hadGeneratedCards ? "ready" : "fallback"
+    flow.narrativeMessage = hadGeneratedCards
+      ? "画像更新后的叙事刷新暂时失败，已保留刚才生成的版本。"
+      : `自定义叙事暂时不可用，已使用内置版本：${error?.message || "未知错误"}`
+    renderNarrativeState()
+    return null
+  } finally {
+    if (request === flow.narrativeRequest) narrativeAbortController = null
+  }
+}
+
 function resetDownstreamFlow() {
   flow.currentCard = 0
   flow.choices = Array(cards.length).fill(null)
@@ -647,9 +1359,18 @@ function resetDownstreamFlow() {
 }
 
 function showOverview() {
+  narrativeAbortController?.abort()
+  narrativeAbortController = null
+  cards = defaultCards
   byId("overview-theme").textContent = `“${flow.selectedTheme}”`
+  byId("overview-title").textContent = "在反复确认之前，先听见自己"
+  byId("overview-narrative-intro").textContent = "这六个情境会沿着本次线索展开，没有标准答案。"
+  flow.narrativeState = "fallback"
+  flow.narrativeMessage = "当前使用内置叙事；正在检查是否可以调用你的自定义模型。"
   resetDownstreamFlow()
   showScreen("overview-screen")
+  renderNarrativeState()
+  void generateNarrativeForFlow()
 }
 
 function recomputeSignals() {
@@ -785,6 +1506,16 @@ function formatDailyDate() {
 }
 
 function buildDailyReport() {
+  const date = formatDailyDate()
+  const profileReport = deriveProfileReport(activeProfileEnvelope(), date)
+  if (profileReport) {
+    const fallbackSuggestions = dailyReportVariants.generic.suggestions
+    profileReport.suggestions = [...profileReport.suggestions, ...fallbackSuggestions]
+      .filter((item, index, items) => items.findIndex((candidate) => candidate[1] === item[1]) === index)
+      .slice(0, 3)
+    return profileReport
+  }
+
   const windowStart = Date.now() - 30 * DAY_MS
   const records = readTideCardRecords().filter((record) => record.collectedAt >= windowStart)
   const quickNotes = readQuickNotes().filter((record) => record.createdAt >= windowStart)
@@ -846,7 +1577,7 @@ function buildDailyReport() {
     personalized: dominant !== "generic",
     mode: dominant === "generic" ? "基础日报" : `根据近期${signalSources.join("与")}`,
     signalSources,
-    date: formatDailyDate()
+    date
   }
 }
 
@@ -894,9 +1625,11 @@ function renderDailyReport() {
     suggestions.append(article)
   })
 
-  byId("report-source-copy").textContent = report.personalized
-    ? `这份日报根据近 30 天的${report.signalSources.join("与")}生成，不读取聊天原文，也不展示隐藏分数。当前相对突出的可解释信号是「${tideMeta[report.dominant].label}」。`
-    : "目前还没有足够的可解释信号，所以显示通用基础版。留下闪念或主动收藏潮笺后，日报会逐渐贴近近期需要。"
+  byId("report-source-copy").textContent = report.profileDriven
+    ? "这份日报由你明确开启的本机多模态文字画像生成。画像可被新输入修正；原图和聊天原文不会写入画像存储，也不会显示心理分数。可在「我的」中关闭或删除。"
+    : (report.personalized
+      ? `这份日报根据近 30 天的${report.signalSources.join("与")}生成，不展示隐藏分数。当前相对突出的可解释信号是「${tideMeta[report.dominant].label}」。`
+      : "目前还没有足够的可解释信号，所以显示通用基础版。留下闪念或主动收藏潮笺后，日报会逐渐贴近近期需要。")
 }
 
 function recomputeTides(stirredKeys = []) {
@@ -1035,6 +1768,8 @@ function renderCard() {
 }
 
 function beginGame() {
+  narrativeAbortController?.abort()
+  narrativeAbortController = null
   if (flow.choices.every(Boolean)) {
     beginChat()
     return
@@ -1064,6 +1799,10 @@ function chooseCard(direction) {
   }
   recomputeSignals()
   const newlyUnlocked = recomputeTides(Object.keys(tides))
+  const answered = flow.choices.filter(Boolean).length
+  if (answered === 3 || answered === cards.length) {
+    void queueProfileRefresh("choices")
+  }
 
   if (direction === "left") storyCard.classList.add("exit-left")
   if (direction === "right") storyCard.classList.add("exit-right")
@@ -1144,7 +1883,11 @@ function renderChat() {
     const paragraph = document.createElement("p")
     paragraph.textContent = message.text
     const meta = document.createElement("small")
-    meta.textContent = message.role === "user" ? "你" : "潮伴 · 本地演示"
+    meta.textContent = message.role === "user"
+      ? "你"
+      : (message.source === "ai"
+        ? "潮伴 · AI"
+        : (message.source === "fallback" ? "潮伴 · 本地降级" : "潮伴"))
     article.append(paragraph, meta)
     log.append(article)
   })
@@ -1157,17 +1900,40 @@ function renderChat() {
     log.append(typing)
   }
 
+  byId("chat-crisis-panel").hidden = !flow.chatCrisis
+  byId("chat-quick-prompts").hidden = flow.chatCrisis
+  const promptButtons = Array.from(document.querySelectorAll("[data-chat-prompt]"))
+  if (flow.chatSuggestedPrompts.length > 0) {
+    promptButtons.forEach((button, index) => {
+      const prompt = flow.chatSuggestedPrompts[index]
+      if (!prompt) return
+      button.dataset.chatPrompt = prompt
+      button.textContent = prompt
+    })
+  }
   const input = byId("chat-input")
-  input.placeholder = "此刻最想说的是……"
-  byId("send-chat").disabled = flow.chatBusy || input.value.trim().length === 0
-  byId("voice-input").disabled = flow.chatBusy
-  byId("chat-status").textContent = voiceInputActive
-    ? "语音输入演示中 · 再点一次结束并生成示例文字"
-    : (flow.chatBusy ? "潮伴正在组织一句回应……" : "文字与语音目前都是前端交互演示")
+  input.disabled = flow.chatCrisis
+  input.placeholder = flow.chatCrisis ? "普通陪聊已暂停" : "此刻最想说的是……"
+  byId("chat-form").classList.toggle("is-paused", flow.chatCrisis)
+  byId("send-chat").disabled = flow.chatCrisis || flow.chatBusy || input.value.trim().length === 0
+  byId("voice-input").disabled = flow.chatCrisis || flow.chatBusy
+  byId("chat-status").textContent = flow.chatCrisis
+    ? "普通陪聊已暂停，请优先使用上方的即时支持路径"
+    : (voiceInputActive
+      ? "语音输入演示中 · 再点一次结束并生成示例文字"
+      : (flow.chatBusy
+        ? "潮伴正在组织一句回应……"
+        : (profileRuntime.consent.serviceProcessing
+          ? "消息按次直达你配置的 AI 服务商；本机不保存对话原文"
+          : "AI 尚未启用；回复会使用本地降级规则")))
 
   window.requestAnimationFrame(() => {
     log.scrollTop = log.scrollHeight
   })
+}
+
+function containsCrisisLanguage(text) {
+  return /(不想活|不想再活|活不下去|活着没意思|想死|想去死|自杀|自殘|自残|轻生|輕生|结束生命|結束生命|结束这一切|傷害自己|伤害自己|傷害別人|伤害别人|杀了自己|殺了自己|杀人|殺人|马上去死|立即危险|立即危險)/.test(text)
 }
 
 function demoChatReply(text) {
@@ -1190,29 +1956,115 @@ function demoChatReply(text) {
   return "我们可以先停在这里，不急着得出结论。如果愿意，带走一个很小的动作就够了。"
 }
 
-function sendChatMessage(rawText) {
+function companionMode() {
+  if (flow.chatMode === "flow") return "chapter"
+  if (flow.chatSeed === "report") return "report"
+  return "standalone"
+}
+
+function companionMessages() {
+  return flow.chatMessages
+    .filter((message) => !message.safety)
+    .slice(-8)
+    .map((message) => ({
+      role: message.role === "user" ? "user" : "assistant",
+      content: message.text
+    }))
+}
+
+async function sendChatMessage(rawText) {
   const text = rawText.trim()
   if (!text || flow.chatBusy) return
   setVoiceInputState(false, { transcribe: false })
   flow.chatMessages.push({ role: "user", text })
   byId("chat-input").value = ""
 
+  if (containsCrisisLanguage(text)) {
+    flow.chatCrisis = true
+    flow.chatMessages.push({
+      role: "bot",
+      safety: true,
+      text: "谢谢你告诉我。现在先不继续普通对话：请确认你是否处于立即危险，并尽快联系所在地紧急服务、危机支持资源，或一位能马上来到你身边的人。"
+    })
+    renderChat()
+    return
+  }
   flow.chatBusy = true
   renderChat()
-  schedule(() => {
+
+  const consent = await requestAiConsent({
+    reason: "陪伴对话需要把你本次发送的消息交给 AI 生成回应。"
+  })
+  if (activeScreenId !== "chat-screen") {
     flow.chatBusy = false
-    flow.chatMessages.push({ role: "bot", text: demoChatReply(text) })
-    renderChat()
-    byId("chat-input").focus({ preventScroll: true })
-  }, 650)
+    return
+  }
+
+  try {
+    if (!consent.serviceProcessing) {
+      flow.chatMessages.push({ role: "bot", source: "fallback", text: demoChatReply(text) })
+    } else {
+      chatAbortController = new AbortController()
+      const profileContext = consent.profilePersonalization
+        ? companionProfileContext(activeProfileEnvelope())
+        : null
+      const request = {
+        consent: { ai_processing: true, use_profile: profileContext !== null },
+        mode: companionMode(),
+        locale: "zh-CN",
+        client_request_id: requestId("chat"),
+        messages: companionMessages(),
+        profile_context: profileContext
+      }
+      const response = await sendCompanionMessage(request, {
+        signal: chatAbortController.signal
+      })
+      const result = response.result
+      flow.chatSuggestedPrompts = Array.isArray(result.suggested_prompts)
+        ? result.suggested_prompts
+        : []
+      const urgent = result.safety_notice?.level === "urgent_support_recommended"
+      flow.chatMessages.push({
+        role: "bot",
+        source: "ai",
+        safety: urgent,
+        text: result.reply
+      })
+      if (urgent) flow.chatCrisis = true
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "client_aborted")) {
+      const prefix = error instanceof ApiError
+        ? `AI 服务暂时不可用（${error.code}）。`
+        : "AI 服务暂时不可用。"
+      flow.chatMessages.push({
+        role: "bot",
+        source: "fallback",
+        text: `${prefix}以下是本地降级回应：${demoChatReply(text)}`
+      })
+    }
+  } finally {
+    chatAbortController = null
+    flow.chatBusy = false
+    if (activeScreenId === "chat-screen") {
+      renderChat()
+      byId("chat-input").focus({ preventScroll: true })
+    }
+    const userTurns = flow.chatMessages.filter((message) => message.role === "user").length
+    if (!flow.chatCrisis && (userTurns === 1 || userTurns % 2 === 0)) {
+      void queueProfileRefresh("chat")
+    }
+  }
 }
 
 function beginChat() {
   flow.chatMode = "flow"
   flow.chatMessages = []
   flow.chatBusy = false
+  flow.chatCrisis = false
   flow.chatSeed = ""
   setVoiceInputState(false, { transcribe: false })
+  flow.chatSuggestedPrompts = []
   showScreen("chat-screen")
 }
 
@@ -1222,7 +2074,9 @@ function openStandaloneChat(options = {}) {
   if (shouldReset) {
     flow.chatMessages = []
     flow.chatBusy = false
+    flow.chatCrisis = false
     flow.chatSeed = options.fromReport ? "report" : ""
+    flow.chatSuggestedPrompts = []
   }
   setVoiceInputState(false, { transcribe: false })
   showScreen("chat-screen")
@@ -1243,7 +2097,7 @@ function setVoiceInputState(active, options = {}) {
   byId("send-chat").disabled = flow.chatBusy || input.value.trim().length === 0
   byId("chat-status").textContent = active
     ? "语音输入演示中 · 再点一次结束并生成示例文字"
-    : (options.transcribe === false ? "文字与语音目前都是前端交互演示" : "已生成一段示例文字，你可以继续编辑")
+    : (options.transcribe === false ? "语音目前为前端交互演示" : "已生成一段示例文字，你可以继续编辑")
 }
 
 function toggleVoiceInputDemo() {
@@ -1258,14 +2112,44 @@ function endChat() {
   }
 }
 
+function currentActionOptions() {
+  const generated = deriveProfileActions(activeProfileEnvelope())
+  const fallback = Object.entries(actionCopy).map(([id, item]) => ({
+    id,
+    label: item.label,
+    title: item.label,
+    rationale: item.rationale
+  }))
+  return [...generated, ...fallback]
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.label === item.label) === index)
+    .slice(0, 3)
+}
+
 function renderActionRecommendation() {
-  const recommendation = signalRecommendation[dominantSignal()] || signalRecommendation.agency
-  document.querySelectorAll("[data-action-id]").forEach((button) => {
+  const options = currentActionOptions()
+  const generated = options[0] && options[0].id.startsWith("profile-action-")
+  const localRecommendation = signalRecommendation[dominantSignal()] || signalRecommendation.agency
+  const recommendation = generated
+    ? {
+      action: options[0].id,
+      copy: `结合最近一次授权画像，先推荐「${options[0].title}」。它仍只是可跳过的低负担建议。`
+    }
+    : localRecommendation
+
+  document.querySelectorAll(".action-option").forEach((button, index) => {
+    const option = options[index]
+    if (!option) return
+    button.dataset.actionId = option.id
+    button.querySelector("strong").textContent = option.label
+    button.querySelector("small").textContent = option.rationale
     const selected = button.dataset.actionId === flow.selectedAction
     button.setAttribute("aria-pressed", String(selected))
     button.classList.toggle("is-selected", selected)
     button.classList.toggle("is-recommended", button.dataset.actionId === recommendation.action)
   })
+  if (flow.selectedAction && !options.some((item) => item.id === flow.selectedAction)) {
+    flow.selectedAction = ""
+  }
   byId("action-rationale").textContent = recommendation.copy
   byId("action-continue").disabled = !flow.selectedAction
 }
@@ -1277,17 +2161,20 @@ function showActionScreen() {
 }
 
 function buildEchoCandidates() {
-  const action = actionCopy[flow.selectedAction]
+  const action = currentActionOptions().find((item) => item.id === flow.selectedAction)
   const tideQuotes = flow.keptTideQuotes
     .slice()
     .reverse()
     .map((quote) => quote.text)
+  const profileEchoes = deriveProfileEchoes(activeProfileEnvelope())
   const defaults = [
     "今天的我已经停下来，认真听了一会儿自己。",
     action ? `提醒自己：${action.label}。` : "不行动也可以是今天诚实的选择。",
     "答案可以慢一点，我不必现在把一切想清楚。"
   ]
-  return Array.from(new Set([...tideQuotes, ...defaults])).slice(0, 3)
+  return Array.from(new Set([...tideQuotes, ...profileEchoes, ...defaults]))
+    .map((item) => item.slice(0, 120))
+    .slice(0, 3)
 }
 
 function updateEchoSelection() {
@@ -1332,13 +2219,8 @@ function showEchoScreen() {
   byId("custom-echo").value = ""
   byId("save-echo").checked = false
 
-  const candidates = buildEchoCandidates()
-  document.querySelectorAll("[data-echo-index]").forEach((button) => {
-    const index = Number(button.dataset.echoIndex)
-    button.querySelector("strong").textContent = candidates[index]
-  })
   showScreen("echo-screen")
-  updateEchoSelection()
+  renderEchoCandidates()
 }
 
 function todayStorageKey(date = new Date()) {
@@ -1399,6 +2281,27 @@ function drawAnswerBookCard() {
 }
 
 function renderInitialImpression() {
+  const aiEnvelope = activeProfileEnvelope()
+  if (aiEnvelope?.profile) {
+    const profile = aiEnvelope.profile
+    const chips = [
+      ...(profile.current_state || []).map((item) => item.title),
+      ...(profile.needs_and_preferences || []).map((item) => item.title),
+      ...(profile.strengths_and_resources || []).map((item) => item.title)
+    ].filter((item, index, items) => item && items.indexOf(item) === index)
+    if (aiEnvelope.modalities_used?.includes("image")) chips.unshift("结合了图片与文字观察")
+    byId("impression-title").textContent = profile.headline
+    byId("impression-summary").textContent = `${profile.summary} 这仍是可被你纠正的暂时性观察，不是固定标签。`
+    const container = byId("impression-chips")
+    container.replaceChildren()
+    chips.slice(0, 3).forEach((copy) => {
+      const chip = document.createElement("span")
+      chip.textContent = copy
+      container.append(chip)
+    })
+    return
+  }
+
   const quickNotes = readQuickNotes()
   const noteCount = quickNotes.length
   const tideRecords = readTideCardRecords()
@@ -1419,7 +2322,7 @@ function renderInitialImpression() {
   const chips = []
 
   noteSignals.forEach((signal) => chips.push(signal.chip))
-  if (quickNotes.some((record) => record.imageData)) chips.push("会用画面保存当下")
+  if (quickNotes.some((record) => record.imageData || record.hadImage)) chips.push("会用画面保存当下")
   if (quickNotes.some((record) => record.voiceDuration > 0)) chips.push("愿意用声音表达感受")
   if (noteCount > 0 && chips.length === 0) chips.push("会接住一闪而过的想法")
   if (dominantTide && tideMeta[dominantTide]) chips.push(`最近更靠近「${tideMeta[dominantTide].label}」`)
@@ -1445,7 +2348,7 @@ function resetQuickNoteComposer() {
   byId("quick-note-input").value = ""
   byId("quick-note-input").style.height = ""
   byId("quick-note-count").textContent = `0 / ${QUICK_NOTE_MAX_LENGTH}`
-  byId("quick-note-status").textContent = "提交后自动保存，并用于更新初印象与个性化内容"
+  byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
   clearQuickNotePhoto()
   clearQuickNoteVoice()
   closeQuickNoteComposer()
@@ -1486,6 +2389,8 @@ function clearQuickNotePhoto() {
   byId("quick-note-camera-input").value = ""
   byId("quick-note-photo-image").removeAttribute("src")
   byId("quick-note-photo-preview").hidden = true
+  byId("quick-note-image-rights-confirmed").checked = false
+  byId("quick-note-image-rights-row").hidden = true
   updateQuickNoteSaveState()
 }
 
@@ -1585,7 +2490,9 @@ async function handleQuickNotePhoto(file) {
     pendingQuickNoteImage = await compressQuickNotePhoto(file)
     byId("quick-note-photo-image").src = pendingQuickNoteImage
     byId("quick-note-photo-preview").hidden = false
-    byId("quick-note-status").textContent = "图片已加入，仍可以补充文字或语音"
+    byId("quick-note-image-rights-confirmed").checked = false
+    byId("quick-note-image-rights-row").hidden = false
+    byId("quick-note-status").textContent = "图片已加入；如需用于持续画像，请在下方单独确认图片处理权利"
   } catch (error) {
     clearQuickNotePhoto()
     byId("quick-note-status").textContent = error instanceof Error ? error.message : "暂时无法添加图片"
@@ -1594,11 +2501,15 @@ async function handleQuickNotePhoto(file) {
 }
 
 function isValidQuickNoteRecord(record) {
+  const hasImage = Boolean(
+    record?.hadImage === true ||
+    (typeof record?.imageData === "string" && record.imageData.startsWith("data:image/"))
+  )
   return Boolean(
     record &&
     typeof record.id === "string" &&
     typeof record.text === "string" &&
-    (record.text.trim().length > 0 || (typeof record.imageData === "string" && record.imageData.startsWith("data:image/")) || record.voiceDuration > 0) &&
+    (record.text.trim().length > 0 || hasImage || record.voiceDuration > 0) &&
     record.text.length <= QUICK_NOTE_MAX_LENGTH &&
     (record.imageData === undefined || (
       typeof record.imageData === "string" &&
@@ -1606,8 +2517,55 @@ function isValidQuickNoteRecord(record) {
       (record.imageData === "" || record.imageData.startsWith("data:image/"))
     )) &&
     Number.isFinite(record.createdAt) &&
+    (record.dateKey === undefined || /^\d{4}-\d{2}-\d{2}$/.test(record.dateKey)) &&
     (record.voiceDuration === undefined || (Number.isFinite(record.voiceDuration) && record.voiceDuration >= 0 && record.voiceDuration <= 300))
   )
+}
+
+function loadStoredQuickNotes() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) || "[]")
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT).map((record) => ({
+      id: record.id,
+      text: record.text,
+      imageData: "",
+      hadImage: record.hadImage === true,
+      imageRightsConfirmed: false,
+      voiceDuration: Number(record.voiceDuration) || 0,
+      createdAt: record.createdAt,
+      dateKey: typeof record.dateKey === "string" ? record.dateKey : memoryDateKey(record.createdAt)
+    }))
+  } catch (_error) {
+    return []
+  }
+}
+
+function persistQuickNotes(records) {
+  const stored = records.map((record) => ({
+    id: record.id,
+    text: record.text,
+    hadImage: record.hadImage === true || Boolean(record.imageData),
+    voiceDuration: Number(record.voiceDuration) || 0,
+    createdAt: record.createdAt,
+    dateKey: typeof record.dateKey === "string" ? record.dateKey : memoryDateKey(record.createdAt)
+  }))
+  try {
+    const serialized = JSON.stringify(stored)
+    window.localStorage.setItem(QUICK_NOTE_STORAGE_KEY, serialized)
+    return window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) === serialized
+  } catch (_error) {
+    return false
+  }
+}
+
+function removeStoredQuickNotes() {
+  try {
+    window.localStorage.removeItem(QUICK_NOTE_STORAGE_KEY)
+    return window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) === null
+  } catch (_error) {
+    return false
+  }
 }
 
 function readQuickNotes() {
@@ -1618,8 +2576,16 @@ function readQuickNotes() {
 }
 
 function writeQuickNotes(records) {
-  quickNoteRecords = records.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT)
+  const next = records.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT)
+  if (!persistQuickNotes(next)) return false
+  quickNoteRecords = next
   return true
+}
+
+function rebuildProfileAfterQuickNoteDeletion() {
+  const shouldRefresh = profileRuntime.consent.profilePersonalization
+  profileRuntime.clearProfile()
+  if (shouldRefresh) void queueProfileRefresh("notes")
 }
 
 function formatQuickNoteDate(timestamp) {
@@ -1631,7 +2597,7 @@ function formatQuickNoteDate(timestamp) {
   }).format(new Date(timestamp))
 }
 
-function saveQuickNote(text, imageData = "", voiceDuration = 0) {
+function saveQuickNote(text, imageData = "", voiceDuration = 0, imageRightsConfirmed = false) {
   const normalized = text.trim()
   if (!normalized && !imageData && !voiceDuration) return false
   const now = Date.now()
@@ -1640,11 +2606,16 @@ function saveQuickNote(text, imageData = "", voiceDuration = 0) {
     id: `note-${now}-${randomPart}`,
     text: normalized.slice(0, QUICK_NOTE_MAX_LENGTH),
     imageData,
+    hadImage: Boolean(imageData),
+    imageRightsConfirmed: Boolean(imageData) && imageRightsConfirmed,
     voiceDuration,
-    createdAt: now
+    createdAt: now,
+    dateKey: memoryDateKey(now)
   }
   quickNoteDeckOffset = 0
-  return writeQuickNotes([record, ...readQuickNotes()])
+  const saved = writeQuickNotes([record, ...readQuickNotes()])
+  if (saved) clearMonthlyMemoryCache()
+  return saved
 }
 
 function removeQuickNote(id) {
@@ -1652,11 +2623,54 @@ function removeQuickNote(id) {
   const next = records.filter((record) => record.id !== id)
   if (next.length === records.length) return
   if (writeQuickNotes(next)) {
+    clearMonthlyMemoryCache()
+    profiledQuickNoteImageSourceIds.delete(`quick-note-image:${id}`)
+    rebuildProfileAfterQuickNoteDeletion()
     quickNoteDeckOffset = next.length > 0 ? quickNoteDeckOffset % next.length : 0
     byId("quick-note-library-status").textContent = "已移除这条闪念，初印象也会随之更新"
     renderQuickNotes()
     renderInitialImpression()
     updateSettingsStorageState()
+  } else {
+    byId("quick-note-library-status").textContent = "浏览器未能删除这条本机闪念，请检查站点存储权限后重试"
+  }
+}
+
+function clearAllQuickNotes(event) {
+  const records = readQuickNotes()
+  if (records.length === 0) {
+    renderQuickNotes()
+    updateSettingsStorageState()
+    return
+  }
+
+  const button = event && event.currentTarget instanceof HTMLButtonElement
+    ? event.currentTarget
+    : null
+  if (button && button.dataset.confirming !== "true") {
+    const original = button.textContent
+    button.dataset.confirming = "true"
+    button.textContent = "再次点击，确认清空闪念"
+    schedule(() => {
+      if (!button.isConnected) return
+      button.dataset.confirming = "false"
+      button.textContent = original
+    }, 4000)
+    return
+  }
+
+  if (removeStoredQuickNotes()) {
+    quickNoteRecords = []
+    clearMonthlyMemoryCache()
+    profiledQuickNoteImageSourceIds.clear()
+    rebuildProfileAfterQuickNoteDeletion()
+    quickNoteDeckOffset = 0
+    renderQuickNotes()
+    renderInitialImpression()
+    updateSettingsStorageState()
+  } else {
+    byId("quick-note-library-status").textContent = "浏览器未能删除本机闪念，请检查站点存储权限后重试"
+    if (button) button.textContent = "删除失败，请重试"
   }
 }
 
@@ -1736,7 +2750,7 @@ function renderQuickNotes() {
     const label = document.createElement("span")
     const modalities = []
     if (record.text.trim()) modalities.push("文字")
-    if (record.imageData) modalities.push("图片")
+    if (record.imageData || record.hadImage) modalities.push("图片")
     if (record.voiceDuration > 0) modalities.push("语音")
     label.textContent = `${modalities.join(" · ")}闪念`
     const time = document.createElement("time")
@@ -1745,7 +2759,9 @@ function renderQuickNotes() {
     meta.append(label, time)
 
     const content = document.createElement("blockquote")
-    content.textContent = record.text.trim() || (record.voiceDuration > 0 ? "一段还没有转成文字的声音。" : "一张还没有解释的瞬间。")
+    content.textContent = record.text.trim() || (record.voiceDuration > 0
+      ? "一段还没有转成文字的声音。"
+      : "一张图片闪念（原图未保存）。")
     sheet.append(meta, content)
     if (record.voiceDuration > 0) {
       const voice = document.createElement("div")
@@ -1874,8 +2890,9 @@ function finishFlow() {
   }
 
   byId("complete-theme").textContent = `“${flow.selectedTheme}”`
-  byId("complete-action").textContent = flow.selectedAction
-    ? actionCopy[flow.selectedAction].label
+  const selectedAction = currentActionOptions().find((item) => item.id === flow.selectedAction)
+  byId("complete-action").textContent = selectedAction
+    ? selectedAction.label
     : "今天没有带走行动（这也可以）"
   if (flow.savedEchoThisRun) {
     byId("complete-echo").textContent = `${delayLabel(flow.echoDelay)}回到这里`
@@ -1887,6 +2904,7 @@ function finishFlow() {
 
   renderCompleteTideCards()
   showScreen("complete-screen")
+  void queueProfileRefresh("complete")
 }
 
 function formatTideCardDate(timestamp) {
@@ -2043,6 +3061,7 @@ function removeEchoRecord(id) {
   const next = records.filter((record) => record.id !== id)
   if (next.length === records.length) return
   if (writeEchoes(next)) {
+    clearMonthlyMemoryCache()
     renderEchoLibrary()
     updateDueEchoCard()
     updateSettingsStorageState()
@@ -2090,6 +3109,7 @@ function clearAllEchoes(event) {
   }
 
   if (writeEchoes([])) {
+    clearMonthlyMemoryCache()
     renderEchoLibrary()
     updateDueEchoCard()
     updateSettingsStorageState()
@@ -2163,11 +3183,12 @@ function memoryArchiveEntries() {
 
   readQuickNotes().forEach((record) => {
     let copy = record.text.trim()
-    if (!copy && record.imageData) copy = "一张图片闪念"
+    if (!copy && (record.imageData || record.hadImage)) copy = "一张图片闪念（原图未保存）"
     if (!copy && record.voiceDuration > 0) copy = `一段 ${formatVoiceDuration(record.voiceDuration)} 的语音闪念`
     entries.push({
       id: `thought-${record.id}`,
-      dateKey: memoryDateKey(record.createdAt),
+      sourceId: `quick-note:${record.id}`,
+      dateKey: record.dateKey || memoryDateKey(record.createdAt),
       timestamp: record.createdAt,
       type: "thought",
       label: "闪念",
@@ -2181,20 +3202,24 @@ function memoryArchiveEntries() {
     const dueKey = memoryDateKey(record.dueAt)
     entries.push({
       id: `echo-created-${record.id}`,
+      sourceId: `echo:${record.id}`,
       dateKey: createdKey,
       timestamp: record.createdAt,
       type: "echo",
       label: "留给未来",
-      copy: isDue ? record.text : `一条回响正在封存，将在 ${formatEchoDate(record.dueAt)} 打开`
+      copy: isDue ? record.text : `一条回响正在封存，将在 ${formatEchoDate(record.dueAt)} 打开`,
+      sealed: !isDue
     })
     if (dueKey !== createdKey) {
       entries.push({
         id: `echo-due-${record.id}`,
+        sourceId: `echo:${record.id}`,
         dateKey: dueKey,
         timestamp: record.dueAt,
         type: "echo",
         label: isDue ? "回到今天" : "等待回响",
-        copy: isDue ? record.text : "这一天，会有一句话重新回到这里"
+        copy: isDue ? record.text : "这一天，会有一句话重新回到这里",
+        sealed: !isDue
       })
     }
   })
@@ -2220,28 +3245,250 @@ function renderMemoryDay(entries) {
     empty.className = "memory-day-empty"
     empty.textContent = "这一天还没有存档。写下一点什么，它就会在这里亮起来。"
     list.append(empty)
-    return
+  } else {
+    entries.slice(0, 3).forEach((entry) => {
+      const item = document.createElement("article")
+      item.className = "memory-day-item"
+      item.dataset.type = entry.type
+      const marker = document.createElement("span")
+      marker.setAttribute("aria-hidden", "true")
+      marker.textContent = entry.type === "echo" ? "⌁" : "＋"
+      const content = document.createElement("div")
+      const label = document.createElement("strong")
+      label.textContent = entry.label
+      const copy = document.createElement("p")
+      copy.textContent = entry.copy
+      content.append(label, copy)
+      item.append(marker, content)
+      list.append(item)
+    })
   }
-
-  entries.slice(0, 3).forEach((entry) => {
-    const item = document.createElement("article")
-    item.className = "memory-day-item"
-    item.dataset.type = entry.type
-    const marker = document.createElement("span")
-    marker.setAttribute("aria-hidden", "true")
-    marker.textContent = entry.type === "echo" ? "⌁" : "＋"
-    const content = document.createElement("div")
-    const label = document.createElement("strong")
-    label.textContent = entry.label
-    const copy = document.createElement("p")
-    copy.textContent = entry.copy
-    content.append(label, copy)
-    item.append(marker, content)
-    list.append(item)
-  })
+  const more = byId("memory-day-more")
+  more.hidden = entries.length <= 3
+  more.textContent = entries.length > 3 ? `还有 ${entries.length - 3} 个片段，可从闪念或回响入口查看。` : ""
 }
 
-function renderMemoryArchive() {
+function readMonthlyMemoryCache() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MONTHLY_MEMORY_STORAGE_KEY) || "[]")
+    return Array.isArray(parsed) ? parsed.filter((item) => (
+      item && /^\d{4}-\d{2}$/.test(item.month) && typeof item.fingerprint === "string" && item.result
+    )).slice(0, 24) : []
+  } catch (_error) {
+    return []
+  }
+}
+
+function writeMonthlyMemoryCache(records) {
+  try {
+    window.localStorage.setItem(MONTHLY_MEMORY_STORAGE_KEY, JSON.stringify(records.slice(0, 24)))
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+function clearMonthlyMemoryCache() {
+  memoryReflectionAbortController?.abort()
+  memoryReflectionAbortController = null
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
+  memoryReflectionFailedFingerprints.clear()
+  try {
+    window.localStorage.removeItem(MONTHLY_MEMORY_STORAGE_KEY)
+  } catch (_error) {
+    // The current local fallback remains available.
+  }
+}
+
+function monthlyReflectionText(value, maxLength, fallback = "") {
+  return typeof value === "string" && value.trim()
+    ? value.trim().replace(/\s+/g, " ").slice(0, maxLength)
+    : fallback
+}
+
+function sanitizeMonthlyReflection(result) {
+  return {
+    analysis_status: result?.analysis_status === "sufficient" ? "sufficient" : "limited",
+    title: monthlyReflectionText(result?.title, 120, "这个月留下了一些可继续理解的片段"),
+    summary: monthlyReflectionText(result?.summary, 1000, "这些片段只代表当月主动留下的内容。"),
+    highlights: Array.from(result?.highlights || []).slice(0, 3).map((item) => ({
+      label: monthlyReflectionText(item?.label, 50, "一个片段"),
+      reflection: monthlyReflectionText(item?.reflection, 260)
+    })).filter((item) => item.reflection),
+    gentle_question: monthlyReflectionText(result?.gentle_question, 220),
+    uncertainty: monthlyReflectionText(result?.uncertainty, 260, "这份回顾只依据当月主动保存的有限片段。")
+  }
+}
+
+function renderMonthlyReflectionContent(result, statusMessage, state = "ready") {
+  byId("memory-ai-title").textContent = result.title
+  byId("memory-ai-summary").textContent = result.summary
+  const highlights = byId("memory-ai-highlights")
+  highlights.replaceChildren()
+  result.highlights.forEach((item) => {
+    const article = document.createElement("article")
+    const label = document.createElement("strong")
+    label.textContent = item.label
+    const copy = document.createElement("span")
+    copy.textContent = item.reflection
+    article.append(label, copy)
+    highlights.append(article)
+  })
+  const question = byId("memory-ai-question")
+  question.hidden = !result.gentle_question
+  question.textContent = result.gentle_question ? `“${result.gentle_question}”` : ""
+  const status = byId("memory-ai-status")
+  status.textContent = `${statusMessage}${result.uncertainty ? ` · ${result.uncertainty}` : ""}`
+  status.dataset.state = state
+}
+
+function localMonthlyReflection(month, entries) {
+  const thoughts = entries.filter((entry) => entry.type === "thought")
+  const echoIds = new Set(entries.filter((entry) => entry.type === "echo").map((entry) => entry.sourceId))
+  const activeDays = new Set(entries.map((entry) => entry.dateKey)).size
+  return {
+    title: `${month.replace("-", " 年 ")} 月，留下 ${activeDays} 个有记录的日子`,
+    summary: thoughts.length + echoIds.size > 0
+      ? `本月日历里有 ${thoughts.length} 条闪念和 ${echoIds.size} 个未来回响。这里只做数量与日期整理，不推断你的心理状态。`
+      : "这个月还没有主动保存的片段，先保持空白也可以。",
+    highlights: [],
+    gentle_question: "这个月，有哪一天是你愿意轻轻记住的？",
+    uncertainty: "本地版本只整理日期和数量。"
+  }
+}
+
+function monthlyEntriesForModel(entries) {
+  const seenEchoes = new Set()
+  return entries.filter((entry) => {
+    if (entry.type !== "echo") return true
+    if (seenEchoes.has(entry.sourceId)) return false
+    seenEchoes.add(entry.sourceId)
+    return true
+  }).map((entry) => ({
+    date: entry.dateKey,
+    type: entry.type,
+    label: entry.type === "echo" ? (entry.sealed ? "未解封回响" : "已解封回响") : "闪念",
+    copy: entry.type === "echo"
+      ? (entry.sealed ? "当月有一条仍在封存的未来回响" : "当月有一条已经解封的未来回响")
+      : entry.copy
+  })).slice(-30)
+}
+
+function monthlyReflectionEvidence(month, entries) {
+  const modelEntries = monthlyEntriesForModel(entries)
+  const envelope = activeProfileEnvelope()
+  const profileForMonth = envelope?.generated_at?.slice(0, 7) === month
+    ? narrativeProfileContext(envelope)
+    : null
+  return {
+    modelEntries,
+    profileForMonth,
+    fingerprint: evidenceFingerprint({ month, entries: modelEntries, profile: profileForMonth })
+  }
+}
+
+function renderStoredOrLocalMonthlyReflection(month, entries) {
+  const { fingerprint } = monthlyReflectionEvidence(month, entries)
+  const cached = readMonthlyMemoryCache().find((item) => item.month === month && item.fingerprint === fingerprint)
+  const refreshButton = byId("memory-ai-refresh")
+  refreshButton.disabled = entries.length === 0
+  if (cached) {
+    refreshButton.textContent = "更新"
+    renderMonthlyReflectionContent(
+      sanitizeMonthlyReflection(cached.result),
+      `由 ${cached.model || "自定义模型"} 生成并保存在本机`
+    )
+    return
+  }
+  refreshButton.textContent = "生成"
+  renderMonthlyReflectionContent(
+    localMonthlyReflection(month, entries),
+    entries.length > 0
+      ? "当前仅显示本地整理；点“生成”后才会按授权发送当月文字化片段"
+      : "没有片段，因此不需要调用模型",
+    "idle"
+  )
+}
+
+async function maybeGenerateMonthlyReflection(month, entries, { force = false } = {}) {
+  const { modelEntries, profileForMonth, fingerprint } = monthlyReflectionEvidence(month, entries)
+  const cached = readMonthlyMemoryCache().find((item) => item.month === month && item.fingerprint === fingerprint)
+  if (cached && !force) {
+    renderMonthlyReflectionContent(sanitizeMonthlyReflection(cached.result), `由 ${cached.model || "自定义模型"} 生成并保存在本机`)
+    return cached
+  }
+
+  const fallback = localMonthlyReflection(month, entries)
+  if (modelEntries.length === 0) {
+    renderMonthlyReflectionContent(fallback, "没有片段，因此没有调用模型", "idle")
+    return null
+  }
+  if (!profileRuntime.consent.serviceProcessing || !profileRuntime.consent.profilePersonalization || !hasApiSettings()) {
+    renderMonthlyReflectionContent(fallback, "开启自定义 API 与持续画像后可生成月度回顾", "idle")
+    return null
+  }
+  if (force) memoryReflectionFailedFingerprints.delete(fingerprint)
+  if (!force && memoryReflectionFailedFingerprints.has(fingerprint)) {
+    renderMonthlyReflectionContent(fallback, "上次模型生成失败；可点“更新”手动重试", "error")
+    return null
+  }
+  if (!force && memoryReflectionRunningFingerprint === fingerprint) return null
+
+  memoryReflectionAbortController?.abort()
+  memoryReflectionAbortController = new AbortController()
+  memoryReflectionRunningFingerprint = fingerprint
+  const request = ++memoryReflectionRequest
+  renderMonthlyReflectionContent(fallback, "正在后台生成本月回顾；日历仍可继续使用", "updating")
+  byId("memory-ai-refresh").disabled = true
+  try {
+    const response = await generateMonthlyReflection({
+      month,
+      entries: modelEntries,
+      profileContext: profileForMonth,
+      signal: memoryReflectionAbortController.signal
+    })
+    if (
+      request !== memoryReflectionRequest ||
+      memoryMonthKey(memoryMonthCursor) !== month ||
+      !profileRuntime.consent.serviceProcessing ||
+      !profileRuntime.consent.profilePersonalization
+    ) {
+      return null
+    }
+    if (response.result?.safety_notice?.level && response.result.safety_notice.level !== "not_indicated") {
+      renderMonthlyReflectionContent(fallback, "模型内容已转为安全支持提示，未写入本机回顾缓存", "warning")
+      openSafety(null)
+      return null
+    }
+    const result = sanitizeMonthlyReflection(response.result)
+    const records = readMonthlyMemoryCache().filter((item) => item.month !== month)
+    records.unshift({ month, fingerprint, generatedAt: response.generated_at, model: response.model, result })
+    writeMonthlyMemoryCache(records)
+    if (request === memoryReflectionRequest && memoryMonthKey(memoryMonthCursor) === month) {
+      renderMonthlyReflectionContent(result, `由 ${response.model} 生成并保存在本机`)
+    }
+    return result
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "client_aborted") && request === memoryReflectionRequest) {
+      memoryReflectionFailedFingerprints.add(fingerprint)
+      renderMonthlyReflectionContent(
+        cached ? sanitizeMonthlyReflection(cached.result) : fallback,
+        `模型回顾暂时不可用：${error?.message || "未知错误"}`,
+        "error"
+      )
+    }
+    return null
+  } finally {
+    if (request === memoryReflectionRequest) {
+      memoryReflectionAbortController = null
+      memoryReflectionRunningFingerprint = ""
+      byId("memory-ai-refresh").disabled = false
+    }
+  }
+}
+
+function renderMemoryArchive({ forceReflection = false, generateReflection = false } = {}) {
   const year = memoryMonthCursor.getFullYear()
   const month = memoryMonthCursor.getMonth()
   const prefix = memoryMonthKey(memoryMonthCursor)
@@ -2266,7 +3513,6 @@ function renderMemoryArchive() {
   byId("memory-calendar").setAttribute("aria-label", `${year}年${month + 1}月时光记录`)
   const calendar = byId("memory-calendar")
   calendar.replaceChildren()
-
   const leadingDays = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   for (let index = 0; index < leadingDays; index += 1) {
@@ -2275,17 +3521,14 @@ function renderMemoryArchive() {
     spacer.setAttribute("aria-hidden", "true")
     calendar.append(spacer)
   }
-
   for (let day = 1; day <= daysInMonth; day += 1) {
     const dateKey = `${prefix}-${String(day).padStart(2, "0")}`
     const dayEntries = entriesByDate.get(dateKey) || []
-    const hasThought = dayEntries.some((entry) => entry.type === "thought")
-    const hasEcho = dayEntries.some((entry) => entry.type === "echo")
     const button = document.createElement("button")
     button.type = "button"
     button.className = "memory-day"
-    button.classList.toggle("has-thought", hasThought)
-    button.classList.toggle("has-echo", hasEcho)
+    button.classList.toggle("has-thought", dayEntries.some((entry) => entry.type === "thought"))
+    button.classList.toggle("has-echo", dayEntries.some((entry) => entry.type === "echo"))
     button.classList.toggle("is-today", dateKey === todayKey)
     button.classList.toggle("is-selected", dateKey === memorySelectedDateKey)
     button.setAttribute("role", "gridcell")
@@ -2302,17 +3545,26 @@ function renderMemoryArchive() {
   }
 
   const thoughtCount = entriesInMonth.filter((entry) => entry.type === "thought").length
-  const echoCount = new Set(
-    entriesInMonth.filter((entry) => entry.type === "echo").map((entry) => entry.id.replace(/^(echo-created|echo-due)-/, ""))
-  ).size
+  const echoCount = new Set(entriesInMonth.filter((entry) => entry.type === "echo").map((entry) => entry.sourceId)).size
   byId("memory-month-total").textContent = thoughtCount + echoCount > 0
     ? `${thoughtCount} 条闪念 · ${echoCount} 个回响`
     : "这个月还没有留下记录"
+  byId("memory-month-next").disabled = prefix >= memoryMonthKey(new Date())
   renderMemoryDay(entriesByDate.get(memorySelectedDateKey) || [])
+  if (generateReflection) {
+    void maybeGenerateMonthlyReflection(prefix, entriesInMonth, { force: forceReflection })
+  } else {
+    renderStoredOrLocalMonthlyReflection(prefix, entriesInMonth)
+  }
 }
 
 function shiftMemoryMonth(offset) {
-  memoryMonthCursor = new Date(memoryMonthCursor.getFullYear(), memoryMonthCursor.getMonth() + offset, 1)
+  const next = new Date(memoryMonthCursor.getFullYear(), memoryMonthCursor.getMonth() + offset, 1)
+  if (memoryMonthKey(next) > memoryMonthKey(new Date())) return
+  memoryReflectionAbortController?.abort()
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
+  memoryMonthCursor = next
   memorySelectedDateKey = ""
   renderMemoryArchive()
 }
@@ -2327,10 +3579,15 @@ function updateSettingsStorageState() {
   const cardCount = readTideCardRecords().length
   cardButton.disabled = cardCount === 0
   cardButton.textContent = cardCount === 0 ? "卡槽目前为空" : `清空潮笺卡槽（${cardCount}）`
+  const quickNoteButton = byId("settings-clear-quick-notes")
+  const quickNoteCount = readQuickNotes().length
+  quickNoteButton.disabled = quickNoteCount === 0
+  quickNoteButton.textContent = quickNoteCount === 0 ? "闪念目前为空" : `清空随手闪念（${quickNoteCount}）`
   byId("my-card-slot-count").textContent = cardCount === 0 ? "还没有收下潮笺" : `已经收下 ${cardCount} 张潮笺`
   byId("my-echo-count").textContent = count === 0 ? "还没有留给未来的话" : `已经保存 ${count} 条回响`
   renderInitialImpression()
   renderMemoryArchive()
+  renderAiState()
 }
 
 function openOnboarding(event) {
@@ -2407,7 +3664,11 @@ function trapModalFocus(event) {
     ? voiceModal
     : (!onboardingModal.hidden
       ? onboardingModal
-      : (!cardDetailModal.hidden ? cardDetailModal : (!tideModal.hidden ? tideModal : null)))
+      : (!cardDetailModal.hidden
+        ? cardDetailModal
+        : (!tideModal.hidden
+          ? tideModal
+          : (!aiConsentModal.hidden ? aiConsentModal : (!safetyModal.hidden ? safetyModal : null)))))
   if (!activeModal) return
   const focusable = Array.from(activeModal.querySelectorAll(
     "button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type='hidden']), a[href]"
@@ -2463,6 +3724,8 @@ document.querySelectorAll("[data-report-feedback]").forEach((button) => {
     byId("report-feedback-status").textContent = button.dataset.reportFeedback === "helpful"
       ? "收到。之后会继续保持这种低负担、可解释的表达。"
       : "收到。这不会被当成你的问题，之后会降低这类推断的权重。"
+    writeReportFeedback(button.dataset.reportFeedback)
+    void queueProfileRefresh("feedback")
   })
 })
 
@@ -2476,7 +3739,7 @@ byId("quick-note-input").addEventListener("input", (event) => {
   event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`
   byId("quick-note-count").textContent = `${length} / ${QUICK_NOTE_MAX_LENGTH}`
   updateQuickNoteSaveState()
-  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = "提交后自动保存，并用于更新初印象与个性化内容"
+  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
 })
 ;[byId("quick-note-photo-input"), byId("quick-note-camera-input")].forEach((input) => {
   input.addEventListener("change", (event) => {
@@ -2488,6 +3751,11 @@ byId("remove-quick-note-photo").addEventListener("click", () => {
   clearQuickNotePhoto()
   byId("quick-note-status").textContent = "图片已移除，仍可以留下文字或语音"
 })
+byId("quick-note-image-rights-confirmed").addEventListener("change", (event) => {
+  byId("quick-note-status").textContent = event.currentTarget.checked
+    ? "已确认：若持续画像已开启，这张图最多发送给自定义模型端点一次"
+    : "图片只在本次页面预览，不会发送给模型"
+})
 byId("quick-note-voice").addEventListener("click", toggleQuickNoteVoiceRecording)
 byId("remove-quick-note-voice").addEventListener("click", () => {
   clearQuickNoteVoice()
@@ -2498,7 +3766,12 @@ byId("quick-note-form").addEventListener("submit", (event) => {
   if (quickNoteVoiceStartedAt) toggleQuickNoteVoiceRecording()
   const input = byId("quick-note-input")
   if (!input.value.trim() && !pendingQuickNoteImage && pendingQuickNoteVoiceDuration === 0) return
-  if (!saveQuickNote(input.value, pendingQuickNoteImage, pendingQuickNoteVoiceDuration)) {
+  if (!saveQuickNote(
+    input.value,
+    pendingQuickNoteImage,
+    pendingQuickNoteVoiceDuration,
+    byId("quick-note-image-rights-confirmed").checked
+  )) {
     byId("quick-note-status").textContent = "暂时无法提交，请稍后再试"
     return
   }
@@ -2506,6 +3779,7 @@ byId("quick-note-form").addEventListener("submit", (event) => {
   renderQuickNotes()
   updateSettingsStorageState()
   resetQuickNoteComposer()
+  if (profileRuntime.consent.profilePersonalization) void queueProfileRefresh("notes")
 })
 
 byId("notes-back").addEventListener("click", () => showScreen("today-screen"))
@@ -2525,7 +3799,15 @@ byId("use-note-example").addEventListener("click", () => {
 byId("notes-personalize").addEventListener("change", (event) => {
   flow.personalizeNotes = event.currentTarget.checked
 })
-byId("notes-continue").addEventListener("click", () => {
+byId("note-images").addEventListener("change", (event) => {
+  addNoteImages(event.currentTarget.files || [])
+  event.currentTarget.value = ""
+})
+byId("images-rights-confirmed").addEventListener("change", (event) => {
+  flow.imageRightsConfirmed = event.currentTarget.checked
+  renderNoteImages()
+})
+byId("notes-continue").addEventListener("click", async () => {
   if (countFilledNotes() < 2) return
   flow.themeCandidates = generateThemeCandidates()
   flow.selectedTheme = ""
@@ -2533,6 +3815,13 @@ byId("notes-continue").addEventListener("click", () => {
   byId("custom-theme").value = ""
   renderThemeOptions()
   showScreen("theme-screen")
+
+  if (!flow.personalizeNotes) return
+  const consent = await requestAiConsent({
+    profileRequested: true,
+    reason: "持续画像可以在后台把这些闪念转成可修正的主题、行动和日报。"
+  })
+  if (consent.profilePersonalization) void queueProfileRefresh("notes")
 })
 
 byId("theme-back").addEventListener("click", () => showScreen("notes-screen"))
@@ -2560,6 +3849,7 @@ byId("choose-custom-theme").addEventListener("click", () => {
 })
 byId("theme-continue").addEventListener("click", () => {
   if (!flow.selectedTheme) return
+  void queueProfileRefresh("notes")
   showOverview()
 })
 
@@ -2640,6 +3930,23 @@ byId("chat-form").addEventListener("submit", (event) => {
 document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
   button.addEventListener("click", () => sendChatMessage(button.dataset.chatPrompt))
 })
+byId("chat-crisis-help").addEventListener("click", () => {
+  cancelRuntimeTimers()
+  if (chatAbortController) {
+    chatAbortController.abort()
+    chatAbortController = null
+  }
+  flow.chatBusy = false
+  flow.chatCrisis = true
+  if (!flow.chatMessages.some((message) => message.safety)) {
+    flow.chatMessages.push({
+      role: "bot",
+      safety: true,
+      text: "我们先把安全放在最前面。请联系所在地紧急服务、危机支持资源，或一位能马上来到你身边的人。"
+    })
+  }
+  renderChat()
+})
 byId("end-chat").addEventListener("click", endChat)
 
 document.querySelectorAll("[data-action-id]").forEach((button) => {
@@ -2657,10 +3964,12 @@ byId("action-back").addEventListener("click", () => {
 })
 byId("skip-action").addEventListener("click", () => {
   flow.selectedAction = ""
+  void queueProfileRefresh("action")
   showEchoScreen()
 })
 byId("action-continue").addEventListener("click", () => {
   if (!flow.selectedAction) return
+  void queueProfileRefresh("action")
   showEchoScreen()
 })
 
@@ -2694,8 +4003,57 @@ byId("finish-flow").addEventListener("click", finishFlow)
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-tide-cards").addEventListener("click", clearAllTideCards)
+byId("settings-clear-quick-notes").addEventListener("click", clearAllQuickNotes)
 byId("memory-month-previous").addEventListener("click", () => shiftMemoryMonth(-1))
 byId("memory-month-next").addEventListener("click", () => shiftMemoryMonth(1))
+byId("memory-ai-refresh").addEventListener("click", () => renderMemoryArchive({ forceReflection: true, generateReflection: true }))
+byId("custom-api-save").addEventListener("click", saveCustomApiSettings)
+byId("custom-api-test").addEventListener("click", () => void testCustomApiSettings())
+byId("custom-api-clear").addEventListener("click", clearCustomApiSettings)
+document.querySelectorAll("[data-custom-api-field]").forEach((field) => {
+  field.addEventListener("input", () => {
+    setApiSettingsStatus("表单有未保存的修改；测试不会自动保存。", "warning")
+  })
+})
+byId("enable-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: true }))
+byId("decline-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: false }))
+byId("ai-service-consent").addEventListener("change", (event) => {
+  profileRuntime.setConsent({
+    serviceProcessing: event.currentTarget.checked,
+    profilePersonalization: event.currentTarget.checked
+      ? profileRuntime.consent.profilePersonalization
+      : false
+  })
+  if (!event.currentTarget.checked) {
+    memoryReflectionAbortController?.abort()
+    memoryReflectionRequest += 1
+    memoryReflectionRunningFingerprint = ""
+  }
+  renderAiState()
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
+})
+byId("ai-profile-consent").addEventListener("change", (event) => {
+  profileRuntime.setConsent({
+    serviceProcessing: true,
+    profilePersonalization: event.currentTarget.checked
+  })
+  renderAiState()
+  if (event.currentTarget.checked) {
+    void queueProfileRefresh("complete")
+  } else {
+    memoryReflectionAbortController?.abort()
+    memoryReflectionRequest += 1
+    memoryReflectionRunningFingerprint = ""
+  }
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
+})
+byId("settings-clear-profile").addEventListener("click", () => {
+  clearMonthlyMemoryCache()
+  profileRuntime.clearProfile()
+  renderAiState()
+  renderTodayReport()
+  renderMemoryArchive()
+})
 
 byId("keep-tide-quote").addEventListener("click", () => closeTideQuote(true))
 byId("skip-tide-quote").addEventListener("click", () => closeTideQuote(false))
@@ -2759,10 +4117,22 @@ document.addEventListener("keydown", (event) => {
     closeTideQuote(false)
     return
   }
+  if (!aiConsentModal.hidden && event.key === "Escape") {
+    event.preventDefault()
+    closeAiConsent({ accepted: false })
+    return
+  }
+  if (!safetyModal.hidden && event.key === "Escape") {
+    event.preventDefault()
+    closeSafety()
+    return
+  }
   trapModalFocus(event)
 })
 
+quickNoteRecords = loadStoredQuickNotes()
 renderNotes()
+initializeAiIntegration()
 updateDueEchoCard()
 updateSettingsStorageState()
 showScreen(activeScreenId, { focus: false })
