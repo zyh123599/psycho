@@ -2,12 +2,19 @@ import test from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  ASR_SETTINGS_STORAGE_KEY,
   AsrTranscriptAccumulator,
   RealtimeAsrSession,
   buildAsrWebSocketUrl,
   buildSigningBaseString,
+  clearAsrSettings,
   formatBeijingTimestamp,
-  parseAsrServerMessage
+  hasAsrSettings,
+  loadAsrSettings,
+  loadSavedAsrSettings,
+  parseAsrServerMessage,
+  saveAsrSettings,
+  testAsrConnection
 } from "../asr-client.js"
 
 const settings = {
@@ -15,6 +22,53 @@ const settings = {
   apiKey: "test-key",
   apiSecret: "test-secret"
 }
+
+class MemoryStorage {
+  constructor() {
+    this.values = new Map()
+  }
+
+  getItem(key) {
+    return this.values.has(key) ? this.values.get(key) : null
+  }
+
+  setItem(key, value) {
+    this.values.set(key, String(value))
+  }
+
+  removeItem(key) {
+    this.values.delete(key)
+  }
+}
+
+test("自定义语音凭据只写入本机，并优先于运行时默认配置", (t) => {
+  const originalStorage = globalThis.localStorage
+  const originalRuntime = globalThis.__XINCHAO_ASR_CONFIG__
+  globalThis.localStorage = new MemoryStorage()
+  globalThis.__XINCHAO_ASR_CONFIG__ = {
+    appId: "runtime-app",
+    apiKey: "runtime-key",
+    apiSecret: "runtime-secret"
+  }
+  t.after(() => {
+    globalThis.localStorage = originalStorage
+    globalThis.__XINCHAO_ASR_CONFIG__ = originalRuntime
+  })
+
+  assert.equal(hasAsrSettings(loadSavedAsrSettings()), false)
+  assert.equal(loadAsrSettings().appId, "runtime-app")
+  const saved = saveAsrSettings(settings)
+  assert.deepEqual(saved, settings)
+  assert.equal(loadSavedAsrSettings().apiSecret, settings.apiSecret)
+  assert.equal(loadAsrSettings().appId, settings.appId)
+  assert.equal(loadAsrSettings({ ...settings, appId: "one-off-app" }).appId, "one-off-app")
+  assert.match(globalThis.localStorage.getItem(ASR_SETTINGS_STORAGE_KEY), /test-app/)
+
+  assert.equal(clearAsrSettings(), true)
+  assert.equal(loadSavedAsrSettings().apiKey, "")
+  assert.equal(loadAsrSettings().apiKey, "runtime-key")
+  assert.throws(() => saveAsrSettings({ appId: "only-app" }), (error) => error?.code === "asr_not_configured")
+})
 
 test("讯飞签名严格使用排序参数、HMAC-SHA1 与北京时区", async () => {
   const uuid = "123e4567-e89b-12d3-a456-426614174000"
@@ -138,6 +192,41 @@ class FakeCapture {
     return new Uint8Array(0)
   }
 }
+
+test("语音连接测试只验证签名与握手，不发送音频", async () => {
+  FakeWebSocket.instances = []
+  const result = await testAsrConnection({ settings, WebSocketClass: FakeWebSocket })
+  assert.equal(result.connected, true)
+  assert.equal(result.sessionId, "session-test")
+  assert.equal(FakeWebSocket.instances[0].sent.length, 0)
+  assert.equal(FakeWebSocket.instances[0].readyState, 3)
+})
+
+test("语音连接测试可取消，并立即关闭尚未完成握手的连接", async () => {
+  class PendingWebSocket {
+    static OPEN = 1
+    static instances = []
+
+    constructor() {
+      this.readyState = PendingWebSocket.OPEN
+      PendingWebSocket.instances.push(this)
+    }
+
+    close() {
+      this.readyState = 3
+    }
+  }
+  const controller = new AbortController()
+  const testing = testAsrConnection({
+    settings,
+    WebSocketClass: PendingWebSocket,
+    signal: controller.signal
+  })
+  while (PendingWebSocket.instances.length === 0) await new Promise((resolve) => setImmediate(resolve))
+  controller.abort()
+  await assert.rejects(testing, (error) => error?.code === "asr_test_cancelled")
+  assert.equal(PendingWebSocket.instances[0].readyState, 3)
+})
 
 test("会话等待 action 后录音，按二进制发送并在最终帧后关闭", async () => {
   FakeWebSocket.instances = []

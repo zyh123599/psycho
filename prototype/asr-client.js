@@ -1,6 +1,8 @@
 import { AUDIO_TARGETS, AudioCaptureError, BrowserPcmCapture } from "./audio-capture.js"
 
 export const ASR_ENDPOINT = "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1"
+export const ASR_SETTINGS_STORAGE_KEY = "xinchao.custom-asr.v1"
+export const DEFAULT_ASR_SETTINGS = Object.freeze({ appId: "", apiKey: "", apiSecret: "" })
 const ASR_READY_TIMEOUT_MS = 10000
 const ASR_FINAL_TIMEOUT_MS = 7000
 const ASR_MAX_BUFFERED_AMOUNT = 256 * 1024
@@ -20,14 +22,81 @@ function cleanCredential(value, maxLength = 256) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
 }
 
+function localStorageOrNull() {
+  try {
+    return globalThis.localStorage || null
+  } catch (_error) {
+    return null
+  }
+}
+
+function normalizedAsrSettings(value, { requireComplete = true } = {}) {
+  const settings = {
+    appId: cleanCredential(value?.appId, 80),
+    apiKey: cleanCredential(value?.apiKey),
+    apiSecret: cleanCredential(value?.apiSecret)
+  }
+  if (Object.values(settings).some((credential) => /[\r\n\0]/.test(credential))) {
+    throw new AsrError("语音转写凭据格式无效", { code: "invalid_asr_settings" })
+  }
+  if (requireComplete && !hasAsrSettings(settings)) {
+    throw new AsrError("请完整填写 APPID、APIKey 和 APISecret", { code: "asr_not_configured" })
+  }
+  return settings
+}
+
+export function loadSavedAsrSettings() {
+  const storage = localStorageOrNull()
+  if (!storage) return { ...DEFAULT_ASR_SETTINGS }
+  try {
+    const parsed = JSON.parse(storage.getItem(ASR_SETTINGS_STORAGE_KEY) || "null")
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ...DEFAULT_ASR_SETTINGS }
+    return normalizedAsrSettings(parsed, { requireComplete: false })
+  } catch (_error) {
+    return { ...DEFAULT_ASR_SETTINGS }
+  }
+}
+
+export function saveAsrSettings(value) {
+  const settings = normalizedAsrSettings(value)
+  const storage = localStorageOrNull()
+  if (!storage) {
+    throw new AsrError("当前环境无法使用本地存储", { code: "storage_unavailable" })
+  }
+  try {
+    storage.setItem(ASR_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+  } catch (cause) {
+    throw new AsrError("语音转写配置无法保存到本机", { code: "storage_unavailable", cause })
+  }
+  return { ...settings }
+}
+
+export function clearAsrSettings() {
+  const storage = localStorageOrNull()
+  if (!storage) return false
+  try {
+    storage.removeItem(ASR_SETTINGS_STORAGE_KEY)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
 export function loadAsrSettings(overrides = {}) {
+  const saved = loadSavedAsrSettings()
   const runtime = globalThis.__XINCHAO_ASR_CONFIG__ || {}
   const env = import.meta.env || {}
-  return {
-    appId: cleanCredential(overrides.appId || runtime.appId || env.VITE_XFYUN_ASR_APP_ID, 80),
-    apiKey: cleanCredential(overrides.apiKey || runtime.apiKey || env.VITE_XFYUN_ASR_API_KEY),
-    apiSecret: cleanCredential(overrides.apiSecret || runtime.apiSecret || env.VITE_XFYUN_ASR_API_SECRET)
-  }
+  const candidates = [
+    overrides,
+    saved,
+    runtime,
+    {
+      appId: env.VITE_XFYUN_ASR_APP_ID,
+      apiKey: env.VITE_XFYUN_ASR_API_KEY,
+      apiSecret: env.VITE_XFYUN_ASR_API_SECRET
+    }
+  ].map((candidate) => normalizedAsrSettings(candidate, { requireComplete: false }))
+  return candidates.find((candidate) => hasAsrSettings(candidate)) || { ...DEFAULT_ASR_SETTINGS }
 }
 
 export function hasAsrSettings(settings = loadAsrSettings()) {
@@ -35,10 +104,7 @@ export function hasAsrSettings(settings = loadAsrSettings()) {
 }
 
 function requireAsrSettings(settings) {
-  if (!hasAsrSettings(settings)) {
-    throw new AsrError("实时语音转写尚未配置", { code: "asr_not_configured" })
-  }
-  return settings
+  return normalizedAsrSettings(settings)
 }
 
 export function formatBeijingTimestamp(value = new Date()) {
@@ -175,6 +241,68 @@ export function parseAsrServerMessage(rawMessage) {
     }
   }
   return { kind: "noop" }
+}
+
+export async function testAsrConnection({
+  settings = loadAsrSettings(),
+  WebSocketClass = globalThis.WebSocket,
+  timeoutMs = ASR_READY_TIMEOUT_MS,
+  signal
+} = {}) {
+  const normalized = requireAsrSettings(settings)
+  if (!WebSocketClass) {
+    throw new AsrError("当前浏览器不支持实时语音连接", { code: "websocket_unsupported" })
+  }
+  if (signal?.aborted) {
+    throw new AsrError("语音连接测试已取消", { code: "asr_test_cancelled" })
+  }
+  const url = await buildAsrWebSocketUrl(normalized)
+  return new Promise((resolve, reject) => {
+    let socket
+    let settled = false
+    let abortHandler
+    const finish = (error, result) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timer)
+      signal?.removeEventListener?.("abort", abortHandler)
+      if (socket) {
+        socket.onmessage = null
+        socket.onerror = null
+        socket.onclose = null
+        try { socket.close(1000, "connection test complete") } catch (_error) { /* already closed */ }
+      }
+      if (error) reject(error)
+      else resolve(result)
+    }
+    const timer = globalThis.setTimeout(() => {
+      finish(new AsrError("语音服务连接测试超时", { code: "asr_ready_timeout", retryable: true }))
+    }, Math.max(1000, Number(timeoutMs) || ASR_READY_TIMEOUT_MS))
+    abortHandler = () => finish(new AsrError("语音连接测试已取消", { code: "asr_test_cancelled" }))
+    signal?.addEventListener?.("abort", abortHandler, { once: true })
+    if (signal?.aborted) abortHandler()
+    if (settled) return
+    try {
+      socket = new WebSocketClass(url)
+      socket.onmessage = (event) => {
+        const parsed = parseAsrServerMessage(event.data)
+        if (parsed.kind === "error") finish(parsed.error)
+        if (parsed.kind === "started") {
+          finish(null, { connected: true, sessionId: parsed.sessionId || "" })
+        }
+      }
+      socket.onerror = () => finish(new AsrError("语音服务连接失败", {
+        code: "asr_socket_error",
+        retryable: true
+      }))
+      socket.onclose = () => finish(new AsrError("语音服务在完成测试前关闭了连接", {
+        code: "asr_socket_closed",
+        retryable: true
+      }))
+    } catch (cause) {
+      finish(new AsrError("无法建立语音服务连接", { code: "asr_socket_error", retryable: true, cause }))
+    }
+  })
 }
 
 export class AsrTranscriptAccumulator {

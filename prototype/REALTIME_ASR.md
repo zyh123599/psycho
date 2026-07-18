@@ -1,10 +1,12 @@
 # 心潮实时语音转写协议与数据边界
 
-心潮 V0.7 不新增语音页面或设置 UI，而是把现有的聊天麦克风、语音陪伴弹层和闪念麦克风接入讯飞实时语音转写大模型。实现依据为[讯飞官方实时语音转写大模型文档](https://www.xfyun.cn/doc/spark/asr_llm/rtasr_llm.html)。
+心潮 V0.7 不新增语音业务页面，而是把现有的聊天麦克风、语音陪伴弹层和闪念麦克风接入讯飞实时语音转写大模型，并在「我的」提供本机凭据设置。实现依据为[讯飞官方实时语音转写大模型文档](https://www.xfyun.cn/doc/spark/asr_llm/rtasr_llm.html)。
 
 ## 配置
 
-复制 `prototype/.env.example` 为 `prototype/.env.local`：
+普通用户在「我的 → 自定义语音转写」填写 APPID、APIKey 和 APISecret。点「测试当前表单」只建立签名后的 WebSocket 并等待握手，不请求麦克风、不发送音频；点「保存到本机」后写入 `localStorage` 的 `xinchao.custom-asr.v1`。清除配置会移除这份本机记录，并立即取消正在进行的语音会话。
+
+开发时也可复制 `prototype/.env.example` 为 `prototype/.env.local`：
 
 ```dotenv
 VITE_XFYUN_ASR_APP_ID=your-app-id
@@ -12,7 +14,7 @@ VITE_XFYUN_ASR_API_KEY=your-api-key
 VITE_XFYUN_ASR_API_SECRET=your-api-secret
 ```
 
-`.env.local` 已被 Git 忽略，源码、测试和文档不得出现真实凭据。也可以在页面加载前注入同名运行时对象：
+`.env.local` 已被 Git 忽略，源码、测试和文档不得出现真实凭据。也可以在页面加载前注入运行时对象：
 
 ```js
 window.__XINCHAO_ASR_CONFIG__ = {
@@ -22,7 +24,7 @@ window.__XINCHAO_ASR_CONFIG__ = {
 }
 ```
 
-运行时对象优先于构建环境变量，便于未来接入用户自定义配置。无论采用哪种方式，纯前端都无法真正保密 APISecret：HMAC 签名必须在客户端完成，构建变量也会进入浏览器包。生产环境应使用独立、可撤销、限额的凭据，或由服务端只签发短时 WebSocket URL。
+配置优先级为：当前函数覆盖值、本机保存值、运行时对象、构建环境变量。无论采用哪种方式，纯前端都无法真正保密 APISecret：HMAC 签名必须在客户端完成，本机值可被同源脚本读取，构建变量也会进入浏览器包。生产环境应使用独立、可撤销、限额的凭据，或由服务端只签发短时 WebSocket URL。
 
 ## WebSocket 鉴权
 
@@ -86,4 +88,4 @@ npm run test:frontend
 npm run build
 ```
 
-测试覆盖签名固定向量、北京时间、增量段替换、错误包、48 kHz/44.1 kHz 连续重采样、PCM16LE、40 ms 切帧、握手后采集、正常结束与取消释放。真实凭据只允许存在于被忽略的 `.env.local`。
+测试覆盖本机配置存取与优先级、无麦克风握手测试、签名固定向量、北京时间、增量段替换、错误包、48 kHz/44.1 kHz 连续重采样、PCM16LE、40 ms 切帧、握手后采集、正常结束与取消释放。真实凭据只允许存在于被忽略的 `.env.local` 或用户浏览器的本机存储。

@@ -664,6 +664,40 @@
               <button class="danger-text-button" id="custom-api-clear" type="button">清除 API 配置</button>
             </div>
           </section>
+          <section class="settings-card custom-api-card">
+            <div class="settings-title-row">
+              <div><h2>自定义语音转写</h2><p>浏览器使用你自己的讯飞凭据直连实时语音转写服务。</p></div>
+              <span class="ai-endpoint-label">仅本机</span>
+            </div>
+            <div class="custom-api-form">
+              <label class="api-field" for="custom-asr-app-id">
+                <span>讯飞 APPID</span>
+                <input id="custom-asr-app-id" data-custom-asr-field type="text" autocomplete="off" spellcheck="false" placeholder="填写控制台中的 APPID" />
+              </label>
+              <div class="api-field">
+                <label for="custom-asr-api-key">讯飞 APIKey</label>
+                <span class="credential-input">
+                  <input id="custom-asr-api-key" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APIKey" />
+                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-key" aria-label="显示 APIKey">显示</button>
+                </span>
+              </div>
+              <div class="api-field">
+                <label for="custom-asr-api-secret">讯飞 APISecret</label>
+                <span class="credential-input">
+                  <input id="custom-asr-api-secret" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APISecret" />
+                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-secret" aria-label="显示 APISecret">显示</button>
+                </span>
+                <small>保存后，三个现有麦克风入口都会优先使用这组凭据。</small>
+              </div>
+            </div>
+            <p class="api-security-note"><strong>请留意：</strong>纯前端无法隐藏 APISecret。本机保存的凭据可被同源脚本、浏览器扩展或持有该设备的人读取，请使用可轮换、限额的独立凭据。</p>
+            <p class="profile-sync-status" id="custom-asr-status" role="status">尚未保存自定义语音转写配置。</p>
+            <div class="settings-actions api-settings-actions">
+              <button class="secondary-button" id="custom-asr-test" type="button">测试当前表单</button>
+              <button class="primary-button" id="custom-asr-save" type="button"><span>保存到本机</span><span aria-hidden="true">→</span></button>
+              <button class="danger-text-button" id="custom-asr-clear" type="button">清除语音转写配置</button>
+            </div>
+          </section>
           <section class="settings-card impression-card">
             <div class="impression-meta"><span>初印象</span><small>轻量画像 · 可随时修正</small></div>
             <h2 id="impression-title">你似乎愿意先看清一点，再决定下一步。</h2>
@@ -707,7 +741,7 @@
               <div><dt>潮笺卡槽</dt><dd>点击「收进卡槽」后，只保存内置卡片编号与收藏时间</dd></div>
               <div><dt>陪伴对话</dt><dd>录音时音频实时直达讯飞并转成可编辑文字；只有主动发送后才进入对话与持续画像，原音频不落盘</dd></div>
               <div><dt>多模态文字画像</dt><dd>仅在单独授权后保存在本机；包含图片与文本形成的文字观察，不保存图片文件</dd></div>
-              <div><dt>API 配置</dt><dd>地址、模型名和 Key 只保存在当前设备；清除站点数据也会移除</dd></div>
+              <div><dt>模型与语音 API 配置</dt><dd>模型端点、讯飞 APPID、Key 和 Secret 只保存在当前设备；清除站点数据也会移除</dd></div>
               <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
             </dl>
             <div class="settings-actions">

@@ -15,7 +15,7 @@ npm run build
 
 OpenAI 兼容模型的 API Key 不要写入源码、`.env` 或构建参数，请在运行后的「我的 → 自定义模型 API」中保存。供应商兼容要求与结构化输出契约见 [`CUSTOM_API.md`](CUSTOM_API.md)。
 
-实时语音转写复用现有麦克风入口，不新增设置 UI。复制 `.env.example` 为 `.env.local` 并填写 `VITE_XFYUN_ASR_APP_ID`、`VITE_XFYUN_ASR_API_KEY`、`VITE_XFYUN_ASR_API_SECRET`；该文件不进入 Git。所有 `VITE_` 值会被打进前端包，纯前端无法保护 APISecret，详细边界见 [`REALTIME_ASR.md`](REALTIME_ASR.md)。
+实时语音转写复用现有麦克风入口。用户可在「我的 → 自定义语音转写」测试、保存和清除自己的讯飞 APPID、APIKey 与 APISecret；开发时仍可用 `.env.local` 作为回退配置。纯前端无法保护本机凭据或构建变量，详细边界见 [`REALTIME_ASR.md`](REALTIME_ASR.md)。
 
 ## 当前体验
 
@@ -85,6 +85,7 @@ OpenAI 兼容模型的 API Key 不要写入源码、`.env` 或构建参数，请
 | 键 | 内容 |
 | --- | --- |
 | `xinchao.custom-api.v1` | 自定义 Base URL、API Key、模型名、图片精度 |
+| `xinchao.custom-asr.v1` | 用户自定义的讯飞 APPID、APIKey、APISecret |
 | `xinchao.ai-consent.v1` | AI 与持续画像授权开关 |
 | `xinchao.reflective-profile.v1` | 内容版本 `2.0` 的最新多模态文字画像及证据指纹 |
 | `xinchao.quick-notes.v1` | 闪念文字、创建时间、日历日期和表达类型元数据；不含图片或音频文件 |

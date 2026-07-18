@@ -24,8 +24,12 @@ import {
   AsrError,
   RealtimeAsrSession,
   asrErrorMessage,
+  clearAsrSettings,
   hasAsrSettings,
-  loadAsrSettings
+  loadAsrSettings,
+  loadSavedAsrSettings,
+  saveAsrSettings,
+  testAsrConnection
 } from "./asr-client.js"
 
 "use strict"
@@ -447,6 +451,7 @@ let activeAsrBaseText = ""
 let activeAsrTranscript = ""
 let activeAsrAutoStopTimer = null
 let chatDraftFromVoice = false
+let asrSettingsTestAbortController = null
 let ephemeralAnswerRecord = null
 let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 let memorySelectedDateKey = ""
@@ -817,6 +822,103 @@ function clearCustomApiSettings() {
   if (activeScreenId === "settings-screen") renderMemoryArchive()
 }
 
+function asrSettingsFromForm() {
+  return {
+    appId: byId("custom-asr-app-id").value,
+    apiKey: byId("custom-asr-api-key").value,
+    apiSecret: byId("custom-asr-api-secret").value
+  }
+}
+
+function setAsrSettingsStatus(message, state = "idle") {
+  const node = byId("custom-asr-status")
+  if (!node) return
+  node.textContent = message
+  node.dataset.state = state
+}
+
+function renderAsrSettings() {
+  const saved = loadSavedAsrSettings()
+  byId("custom-asr-app-id").value = saved.appId
+  byId("custom-asr-api-key").value = saved.apiKey
+  byId("custom-asr-api-secret").value = saved.apiSecret
+  document.querySelectorAll("[data-credential-target]").forEach((button) => {
+    const input = byId(button.dataset.credentialTarget)
+    input.type = "password"
+    button.textContent = "显示"
+    button.setAttribute("aria-label", `显示 ${input.id.endsWith("secret") ? "APISecret" : "APIKey"}`)
+  })
+  if (hasAsrSettings(saved)) {
+    setAsrSettingsStatus("自定义讯飞凭据已保存在这台设备；可先测试连接。", "ready")
+  } else if (hasAsrSettings(loadAsrSettings())) {
+    setAsrSettingsStatus("当前使用构建或运行时默认凭据；保存表单后会优先使用本机配置。", "warning")
+  } else {
+    setAsrSettingsStatus("尚未配置。保存后，三个现有麦克风入口会使用这组凭据。", "idle")
+  }
+}
+
+function cancelAsrSettingsTest() {
+  asrSettingsTestAbortController?.abort()
+  asrSettingsTestAbortController = null
+  byId("custom-asr-test").disabled = false
+}
+
+function saveCustomAsrSettings() {
+  cancelAsrSettingsTest()
+  try {
+    saveAsrSettings(asrSettingsFromForm())
+    renderAsrSettings()
+    setAsrSettingsStatus("讯飞 APPID、APIKey 和 APISecret 已保存到本机。", "ready")
+  } catch (error) {
+    setAsrSettingsStatus(error?.message || "语音转写配置保存失败", "error")
+  }
+}
+
+async function testCustomAsrSettings() {
+  cancelAsrSettingsTest()
+  const button = byId("custom-asr-test")
+  const controller = new AbortController()
+  asrSettingsTestAbortController = controller
+  button.disabled = true
+  setAsrSettingsStatus("正在测试签名与讯飞 WebSocket 连接；不会启用麦克风…", "updating")
+  try {
+    await testAsrConnection({ settings: asrSettingsFromForm(), signal: controller.signal })
+    if (controller !== asrSettingsTestAbortController) return
+    setAsrSettingsStatus("连接成功。保存后，现有麦克风入口即可使用。", "ready")
+  } catch (error) {
+    if (controller !== asrSettingsTestAbortController || error?.code === "asr_test_cancelled") return
+    setAsrSettingsStatus(asrErrorMessage(error), "error")
+  } finally {
+    if (controller === asrSettingsTestAbortController) {
+      asrSettingsTestAbortController = null
+      button.disabled = false
+    }
+  }
+}
+
+function clearCustomAsrSettings() {
+  cancelAsrSettingsTest()
+  if (activeAsrSession) cancelActiveAsrImmediately(activeAsrOwner)
+  clearAsrSettings()
+  renderAsrSettings()
+  setAsrSettingsStatus(
+    hasAsrSettings(loadAsrSettings())
+      ? "本机自定义凭据已清除；当前仍有构建或运行时默认凭据。"
+      : "本机讯飞 APPID、APIKey 和 APISecret 已清除。",
+    hasAsrSettings(loadAsrSettings()) ? "warning" : "idle"
+  )
+}
+
+function toggleCredentialVisibility(event) {
+  const button = event.currentTarget
+  const input = byId(button.dataset.credentialTarget)
+  const reveal = input.type === "password"
+  input.type = reveal ? "text" : "password"
+  button.textContent = reveal ? "隐藏" : "显示"
+  const credential = input.id.endsWith("secret") ? "APISecret" : "APIKey"
+  button.setAttribute("aria-label", `${reveal ? "隐藏" : "显示"} ${credential}`)
+}
+
 function renderAiState() {
   const consent = profileRuntime.consent
   const envelope = profileRuntime.profileEnvelope
@@ -1011,6 +1113,7 @@ function renderEchoCandidates() {
 
 function initializeAiIntegration() {
   renderApiSettings()
+  renderAsrSettings()
   if (!hasApiSettings() && profileRuntime.consent.serviceProcessing) {
     profileRuntime.setConsent({ serviceProcessing: false, profilePersonalization: false })
   }
@@ -2268,7 +2371,7 @@ async function startRealtimeAsr(owner) {
   if (activeAsrSession) await stopRealtimeAsr({ cancel: true })
   const settings = loadAsrSettings()
   if (!hasAsrSettings(settings)) {
-    const message = "实时语音转写尚未配置，请提供讯飞 ASR 环境变量"
+    const message = "实时语音转写尚未配置，请到“我的”保存讯飞凭据"
     if (owner === "quick-note") byId("quick-note-status").textContent = message
     else if (owner === "voice-modal") byId("voice-call-status").textContent = message
     else byId("chat-status").textContent = message
@@ -4247,6 +4350,18 @@ document.querySelectorAll("[data-custom-api-field]").forEach((field) => {
     setApiSettingsStatus("表单有未保存的修改；测试不会自动保存。", "warning")
   })
 })
+byId("custom-asr-save").addEventListener("click", saveCustomAsrSettings)
+byId("custom-asr-test").addEventListener("click", () => void testCustomAsrSettings())
+byId("custom-asr-clear").addEventListener("click", clearCustomAsrSettings)
+document.querySelectorAll("[data-custom-asr-field]").forEach((field) => {
+  field.addEventListener("input", () => {
+    cancelAsrSettingsTest()
+    setAsrSettingsStatus("表单有未保存的修改；测试不会自动保存。", "warning")
+  })
+})
+document.querySelectorAll("[data-credential-target]").forEach((button) => {
+  button.addEventListener("click", toggleCredentialVisibility)
+})
 byId("enable-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: true }))
 byId("decline-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: false }))
 byId("ai-service-consent").addEventListener("change", (event) => {
@@ -4360,11 +4475,13 @@ document.addEventListener("keydown", (event) => {
   trapModalFocus(event)
 })
 window.addEventListener("pagehide", () => {
+  cancelAsrSettingsTest()
   if (activeAsrSession) cancelActiveAsrImmediately(activeAsrOwner)
 })
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden" && activeAsrSession) {
-    cancelActiveAsrImmediately(activeAsrOwner)
+  if (document.visibilityState === "hidden") {
+    cancelAsrSettingsTest()
+    if (activeAsrSession) cancelActiveAsrImmediately(activeAsrOwner)
   }
 })
 

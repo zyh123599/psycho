@@ -51,7 +51,9 @@ Vite 以 `prototype/` 为入口，生产文件输出到 `dist/`。Capacitor 的 
 
 ## 配置实时语音转写
 
-聊天、语音陪伴弹层和闪念中已有的麦克风按钮会直连讯飞实时语音转写大模型。复制示例文件并填写讯飞控制台凭据：
+聊天、语音陪伴弹层和闪念中已有的麦克风按钮会直连讯飞实时语音转写大模型。在「我的 → 自定义语音转写」填写 APPID、APIKey 和 APISecret，可先测试签名与 WebSocket 握手，再保存到当前设备。测试不会请求麦克风或发送音频。
+
+开发时也可以复制示例文件并提供默认凭据：
 
 ```bash
 cp prototype/.env.example prototype/.env.local
@@ -63,9 +65,9 @@ VITE_XFYUN_ASR_API_KEY=your-api-key
 VITE_XFYUN_ASR_API_SECRET=your-api-secret
 ```
 
-`.env.local` 已被 Git 忽略。修改后需要重新启动开发服务或重新构建。麦克风仅可在 HTTPS、localhost 或受信任的应用 WebView 中使用。浏览器会把音频实时发送到讯飞，接收 16 kHz PCM 的增量转写；原音频不会写入本机。转写草稿必须由用户主动发送对话或保存闪念后，才可能在持续画像授权开启时作为 `voice_transcript` 文字证据进入画像。
+本机保存的设置优先于运行时对象和 `.env.local`；`.env.local` 已被 Git 忽略，修改后需要重新启动开发服务或重新构建。麦克风仅可在 HTTPS、localhost 或受信任的应用 WebView 中使用。浏览器会把音频实时发送到讯飞，接收 16 kHz PCM 的增量转写；原音频不会写入本机。转写草稿必须由用户主动发送对话或保存闪念后，才可能在持续画像授权开启时作为 `voice_transcript` 文字证据进入画像。
 
-纯前端无法真正保密签名所需的 APISecret：所有 `VITE_` 值都会进入最终浏览器包。生产环境应使用可轮换、限额的独立凭据，或改用只签发短时 WebSocket URL 的服务端。完整协议与数据边界见 [`prototype/REALTIME_ASR.md`](prototype/REALTIME_ASR.md)。
+纯前端无法真正保密签名所需的 APISecret：本机保存值可被同源脚本或扩展读取，所有 `VITE_` 值也会进入最终浏览器包。生产环境应使用可轮换、限额的独立凭据，或改用只签发短时 WebSocket URL 的服务端。完整协议与数据边界见 [`prototype/REALTIME_ASR.md`](prototype/REALTIME_ASR.md)。
 
 ## 我的时光与月度回顾
 
@@ -80,6 +82,7 @@ VITE_XFYUN_ASR_API_SECRET=your-api-secret
 | 数据 | 持久化位置 | 说明 |
 | --- | --- | --- |
 | 自定义 API 配置 | `localStorage` | Base URL、模型、图片精度和 API Key；可在「我的」清除 |
+| 自定义语音转写配置 | `localStorage` | 讯飞 APPID、APIKey 和 APISecret；可在「我的」测试、保存和清除 |
 | 多模态文字画像 | `localStorage` | 保存模型从文字、图片内容与互动形成的结构化文字观察；不保存原图 |
 | 闪念索引 | `localStorage` | 保存文字、创建时间、日期和表达类型元数据；不保存图片数据或音频文件 |
 | 实时麦克风音频 | 仅讯飞在途请求 | 录音期间以 PCM 分帧发送；心潮不落盘、不写入画像，服务商保留策略由其决定 |

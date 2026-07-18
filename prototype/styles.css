@@ -948,6 +948,10 @@ button.slot-card { cursor: pointer; }
 .api-field input:focus, .api-field select:focus { border-color: rgba(49,92,79,.58); box-shadow: 0 0 0 3px rgba(49,92,79,.09); }
 .api-field small { color: var(--ink-faint); font-size: 8px; font-weight: 400; line-height: 1.45; }
 .api-field code { padding: 1px 3px; border-radius: 4px; background: rgba(49,92,79,.07); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; }
+.credential-input { position: relative; display: block; }
+.api-field .credential-input input { padding-right: 58px; }
+.credential-visibility { position: absolute; top: 50%; right: 7px; min-width: 43px; min-height: 30px; padding: 0 8px; border: 0; border-radius: 9px; color: var(--forest); background: rgba(49,92,79,.09); cursor: pointer; font-size: 8px; font-weight: 750; transform: translateY(-50%); }
+.credential-visibility:focus-visible { outline: 2px solid rgba(49,92,79,.5); outline-offset: 1px; }
 .api-field-row { display: grid; grid-template-columns: 1.05fr .95fr; gap: 9px; }
 .settings-card > .api-security-note { margin: 12px 0 2px; padding: 10px; border-radius: 12px; color: #795c35; background: rgba(216,187,120,.16); font-size: 9px; line-height: 1.55; }
 .api-settings-actions { grid-template-columns: 1fr 1fr; margin-top: 12px; }
