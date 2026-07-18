@@ -333,6 +333,7 @@ const INSIGHT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
+    analysis_status: { type: "string", enum: ["limited", "sufficient"] },
     title: { type: "string" },
     description: { type: "string" },
     confidence: { type: "string", enum: ["low", "medium", "high"] },
@@ -469,6 +470,47 @@ const NARRATIVE_SCHEMA = {
   required: ["title", "intro", "cards"]
 }
 
+const MONTHLY_REFLECTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    analysis_status: {
+      type: "string",
+      enum: ["limited", "sufficient"]
+    },
+    title: { type: "string" },
+    summary: { type: "string" },
+    highlights: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          label: { type: "string" },
+          reflection: { type: "string" }
+        },
+        required: ["label", "reflection"]
+      }
+    },
+    gentle_question: { type: "string" },
+    uncertainty: { type: "string" },
+    safety_notice: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        level: {
+          type: "string",
+          enum: ["not_indicated", "urgent_support_recommended", "immediate_danger"]
+        },
+        message: { type: "string" }
+      },
+      required: ["level", "message"]
+    }
+  },
+  required: ["analysis_status", "title", "summary", "highlights", "gentle_question", "uncertainty", "safety_notice"]
+}
+
 function completionText(body) {
   const message = body?.choices?.[0]?.message
   if (!message) {
@@ -524,13 +566,15 @@ function validateProfile(profile, currentImageSourceIds) {
     ? profile.multimodal_observations
     : []
   if (currentImageSourceIds.length > 0) {
-    const referenced = observations.some((item) => (
-      Array.isArray(item?.source_ids) && item.source_ids.some((id) => currentImageSourceIds.includes(id))
-    ))
-    if (!referenced) {
-      throw new ApiError("模型未返回本次图片的多模态文字观察", {
+    const referencedSourceIds = new Set(observations.flatMap((item) => (
+      Array.isArray(item?.source_ids) ? item.source_ids : []
+    )))
+    const missingSourceIds = currentImageSourceIds.filter((sourceId) => !referencedSourceIds.has(sourceId))
+    if (missingSourceIds.length > 0) {
+      throw new ApiError("模型未完整返回本批图片的多模态文字观察", {
         code: "missing_multimodal_observation",
-        retryable: true
+        retryable: true,
+        details: { missing_source_ids: missingSourceIds }
       })
     }
   }
@@ -743,6 +787,77 @@ export async function generateNarrative({
   const result = parseStructuredCompletion(body)
   if (!Array.isArray(result.cards) || result.cards.length !== 6) {
     throw new ApiError("模型返回的叙事卡数量不正确", { code: "invalid_model_output" })
+  }
+  return {
+    schema_version: "1.0",
+    request_id: body.id || requestId,
+    generated_at: new Date().toISOString(),
+    model: settings.model,
+    result
+  }
+}
+
+export async function generateMonthlyReflection({
+  month,
+  entries = [],
+  profileContext = null,
+  locale = "zh-CN",
+  signal,
+  timeoutMs = DEFAULT_MODEL_TIMEOUT_MS,
+  settings: settingsOverride
+} = {}) {
+  if (typeof month !== "string" || !/^\d{4}-\d{2}$/.test(month)) {
+    throw new ApiError("生成月度回顾前需要有效月份", { code: "invalid_request" })
+  }
+  const safeEntries = Array.from(entries || []).slice(-30).map((entry) => ({
+    date: boundedString(entry?.date, 10),
+    type: entry?.type === "echo" ? "echo" : "thought",
+    label: boundedString(entry?.label, 40),
+    copy: boundedString(entry?.copy, 280)
+  })).filter((entry) => entry.date && entry.copy)
+  if (safeEntries.length === 0) {
+    throw new ApiError("这个月还没有可用于回顾的片段", { code: "invalid_request" })
+  }
+  const settings = activeSettings(settingsOverride)
+  const { body, requestId } = await providerRequest("/chat/completions", {
+    settings,
+    signal,
+    timeoutMs,
+    body: {
+      model: settings.model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "你是心潮的月度反思向导，只返回符合 JSON Schema 的简体中文内容。",
+            "仅根据用户明确保存的当月片段和可修正画像形成温和回顾；不要补写没有出现的事件，不要把频率解释成人格或诊断。",
+            "未解封的未来回响只会以占位文字出现，禁止猜测其正文。画像只是表达参考，不是确定事实。",
+            "材料稀疏时 analysis_status 必须为 limited。title 与 summary 应低负担且具体；highlights 最多三条，每条说明一个可观察主题；gentle_question 只给一个可跳过的问题。",
+            "禁止心理评分、治疗承诺、确定性因果、危机推断和流水线元话术。uncertainty 必须明确材料边界。"
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            locale,
+            month,
+            saved_month_entries: safeEntries,
+            reflective_profile_context: profileContext
+          })
+        }
+      ],
+      response_format: strictResponseFormat("xinchao_monthly_reflection", MONTHLY_REFLECTION_SCHEMA)
+    }
+  })
+  const result = parseStructuredCompletion(body)
+  if (
+    !["limited", "sufficient"].includes(result.analysis_status) ||
+    !boundedString(result.title, 120) ||
+    !boundedString(result.summary, 1200) ||
+    !Array.isArray(result.highlights) ||
+    !isRecord(result.safety_notice)
+  ) {
+    throw new ApiError("模型返回的月度回顾结构不完整", { code: "invalid_model_output" })
   }
   return {
     schema_version: "1.0",

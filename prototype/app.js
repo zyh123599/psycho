@@ -1,6 +1,7 @@
 import {
   ApiError,
   clearApiSettings,
+  generateMonthlyReflection,
   generateNarrative,
   hasApiSettings,
   loadApiSettings,
@@ -25,7 +26,9 @@ import {
 const STORAGE_KEY = "xinchao.future-echoes.v1"
 const CARD_STORAGE_KEY = "xinchao.tide-cards.v1"
 const QUICK_NOTE_MAX_LENGTH = 200
-const QUICK_NOTE_LIMIT = 50
+const QUICK_NOTE_LIMIT = 365
+const QUICK_NOTE_STORAGE_KEY = "xinchao.quick-notes.v1"
+const MONTHLY_MEMORY_STORAGE_KEY = "xinchao.monthly-memory.v1"
 const ANSWER_BOOK_STORAGE_KEY = "xinchao.answer-book.v1"
 const ONBOARDING_STORAGE_KEY = "xinchao.onboarding.v1"
 const QUICK_NOTE_IMAGE_MAX_DATA_LENGTH = 650000
@@ -429,8 +432,15 @@ let pendingQuickNoteImage = ""
 let pendingQuickNoteVoiceDuration = 0
 let quickNoteVoiceStartedAt = 0
 let quickNoteRecordingTimer = null
+const profiledQuickNoteImageSourceIds = new Set()
 let voiceInputActive = false
 let ephemeralAnswerRecord = null
+let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+let memorySelectedDateKey = ""
+let memoryReflectionAbortController = null
+let memoryReflectionRequest = 0
+let memoryReflectionRunningFingerprint = ""
+const memoryReflectionFailedFingerprints = new Set()
 let aiConsentReturnFocus = null
 let pendingAiConsentResolution = null
 let pendingAiConsentPromise = null
@@ -499,6 +509,26 @@ function createImageEntry(file) {
   }
 }
 
+function quickNoteImageEntry(record) {
+  const match = typeof record.imageData === "string"
+    ? record.imageData.match(/^data:([^;,]+);base64,(.+)$/)
+    : null
+  if (!match) return null
+  try {
+    const binary = window.atob(match[2])
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return {
+      file: new Blob([bytes], { type: match[1] }),
+      signature: `quick-note-image:${record.id}`,
+      sourceId: `quick-note-image:${record.id}`,
+      context: "用户主动提交的独立图片闪念；只读取明确文字、作品、物体和语境，不根据人脸、身体、穿着或外貌推断心理属性。"
+    }
+  } catch (_error) {
+    return null
+  }
+}
+
 function profileFocusFor(reason) {
   const focuses = {
     notes: "根据用户刚刚主动提供的闪念和图片更新暂时性画像，并给出可供用户自行确认的主题线索。",
@@ -515,10 +545,11 @@ function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
   const texts = []
   const signals = []
 
-  readQuickNotes().slice(0, 6).forEach((record, index) => {
+  const recentQuickNotes = readQuickNotes().slice(0, 12)
+  recentQuickNotes.slice(0, 6).forEach((record) => {
     const content = record.text.trim()
     if (!content) return
-    texts.push({ source_id: `quick-note:${index + 1}`, source: "note", content })
+    texts.push({ source_id: `quick-note:${record.id}`, source: "note", content })
   })
 
   if (flow.personalizeNotes) {
@@ -586,22 +617,26 @@ function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
   }
 
   const maxImages = Math.max(0, Number(capabilities.max_images) || 0)
-  const images = flow.personalizeNotes && flow.imageRightsConfirmed
+  const quickNoteImages = recentQuickNotes
+    .filter((record) => record.imageRightsConfirmed === true)
+    .map(quickNoteImageEntry)
+    .filter(Boolean)
+  const pendingQuickNoteImages = quickNoteImages
+    .filter((entry) => !profiledQuickNoteImageSourceIds.has(entry.sourceId))
+  const chapterImages = flow.personalizeNotes && flow.imageRightsConfirmed
     ? flow.images
       .filter((entry) => !flow.profiledImageSignatures.includes(entry.signature))
-      .slice(0, maxImages)
     : []
+  const images = [...pendingQuickNoteImages, ...chapterImages].slice(0, maxImages)
   const image_contexts = images.map((entry) => ({
     source_id: entry.sourceId,
     signature: entry.signature,
-    description: "用户主动选择的个人记录图片；只读取其中明确文字、作品、物体或用户给出的语境，不根据人脸、身体、穿着或外貌推断心理属性。"
+    description: entry.context || "用户主动选择的个人记录图片；只读取其中明确文字、作品、物体或用户给出的语境，不根据人脸、身体、穿着或外貌推断心理属性。"
   }))
-  const activeImageEvidence = flow.personalizeNotes && flow.imageRightsConfirmed
-    ? flow.images.map((entry) => ({
-      source_id: entry.sourceId,
-      signature: entry.signature
-    }))
-    : []
+  const activeImageEvidence = images.map((entry) => ({
+    source_id: entry.sourceId,
+    signature: entry.signature
+  }))
 
   if (texts.length === 0 && signals.length === 0 && images.length === 0) return null
   const fingerprint = evidenceFingerprint({
@@ -647,6 +682,18 @@ function handleProfileUpdated(envelope, _reason, rawResponse) {
       .filter((entry) => processed.has(entry.sourceId))
       .map((entry) => entry.signature)
     flow.profiledImageSignatures = [...new Set([...flow.profiledImageSignatures, ...signatures])]
+    processed.forEach((sourceId) => {
+      if (sourceId.startsWith("quick-note-image:")) profiledQuickNoteImageSourceIds.add(sourceId)
+    })
+    const hasPendingQuickNoteImages = readQuickNotes().some((record) => (
+      Boolean(record.imageData) &&
+      record.imageRightsConfirmed === true &&
+      !profiledQuickNoteImageSourceIds.has(`quick-note-image:${record.id}`)
+    ))
+    const hasPendingChapterImages = flow.personalizeNotes && flow.imageRightsConfirmed && flow.images.some((entry) => (
+      !flow.profiledImageSignatures.includes(entry.signature)
+    ))
+    if (hasPendingQuickNoteImages || hasPendingChapterImages) void queueProfileRefresh("notes")
   }
   applyProfileToVisibleExperience(envelope)
 }
@@ -666,7 +713,10 @@ function applyProfileToVisibleExperience(envelope) {
   if (activeScreenId === "overview-screen" && flow.choices.every((choice) => !choice)) {
     void generateNarrativeForFlow()
   }
-  if (activeScreenId === "settings-screen") renderInitialImpression()
+  if (activeScreenId === "settings-screen") {
+    renderInitialImpression()
+    renderMemoryArchive()
+  }
   renderTodayReport()
   renderAiState()
 }
@@ -711,6 +761,7 @@ function saveCustomApiSettings() {
     renderApiSettings()
     setApiSettingsStatus(`已保存到本机：${settings.model}`, "ready")
     renderAiState()
+    if (activeScreenId === "settings-screen") renderMemoryArchive()
   } catch (error) {
     setApiSettingsStatus(error?.message || "配置保存失败", "error")
   }
@@ -736,6 +787,9 @@ async function testCustomApiSettings() {
 }
 
 function clearCustomApiSettings() {
+  memoryReflectionAbortController?.abort()
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
   clearApiSettings()
   if (profileRuntime.consent.serviceProcessing) {
     profileRuntime.setConsent({ serviceProcessing: false, profilePersonalization: false })
@@ -743,6 +797,7 @@ function clearCustomApiSettings() {
   renderApiSettings()
   setApiSettingsStatus("本机 API 地址、模型名和 Key 已清除；现有本机画像未自动删除。", "idle")
   renderAiState()
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
 }
 
 function renderAiState() {
@@ -958,7 +1013,12 @@ function focusScreenHeading(screen) {
 
 function updateBottomNavigation(screenId) {
   bottomNav.hidden = !topLevelScreens.has(screenId)
-  backgroundMusicToggle.hidden = !musicControlScreens.has(screenId)
+  const musicSlot = byId(screenId)?.querySelector("[data-music-slot]")
+  const showMusicControl = musicControlScreens.has(screenId) && musicSlot
+  if (showMusicControl && backgroundMusicToggle.parentElement !== musicSlot) {
+    musicSlot.prepend(backgroundMusicToggle)
+  }
+  backgroundMusicToggle.hidden = !showMusicControl
   bottomNav.querySelectorAll("[data-nav-target]").forEach((button) => {
     if (button.dataset.navTarget === screenId) {
       button.setAttribute("aria-current", "page")
@@ -2262,7 +2322,7 @@ function renderInitialImpression() {
   const chips = []
 
   noteSignals.forEach((signal) => chips.push(signal.chip))
-  if (quickNotes.some((record) => record.imageData)) chips.push("会用画面保存当下")
+  if (quickNotes.some((record) => record.imageData || record.hadImage)) chips.push("会用画面保存当下")
   if (quickNotes.some((record) => record.voiceDuration > 0)) chips.push("愿意用声音表达感受")
   if (noteCount > 0 && chips.length === 0) chips.push("会接住一闪而过的想法")
   if (dominantTide && tideMeta[dominantTide]) chips.push(`最近更靠近「${tideMeta[dominantTide].label}」`)
@@ -2288,7 +2348,7 @@ function resetQuickNoteComposer() {
   byId("quick-note-input").value = ""
   byId("quick-note-input").style.height = ""
   byId("quick-note-count").textContent = `0 / ${QUICK_NOTE_MAX_LENGTH}`
-  byId("quick-note-status").textContent = "提交后自动保存，并用于更新初印象与个性化内容"
+  byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
   clearQuickNotePhoto()
   clearQuickNoteVoice()
   closeQuickNoteComposer()
@@ -2329,6 +2389,8 @@ function clearQuickNotePhoto() {
   byId("quick-note-camera-input").value = ""
   byId("quick-note-photo-image").removeAttribute("src")
   byId("quick-note-photo-preview").hidden = true
+  byId("quick-note-image-rights-confirmed").checked = false
+  byId("quick-note-image-rights-row").hidden = true
   updateQuickNoteSaveState()
 }
 
@@ -2428,7 +2490,9 @@ async function handleQuickNotePhoto(file) {
     pendingQuickNoteImage = await compressQuickNotePhoto(file)
     byId("quick-note-photo-image").src = pendingQuickNoteImage
     byId("quick-note-photo-preview").hidden = false
-    byId("quick-note-status").textContent = "图片已加入，仍可以补充文字或语音"
+    byId("quick-note-image-rights-confirmed").checked = false
+    byId("quick-note-image-rights-row").hidden = false
+    byId("quick-note-status").textContent = "图片已加入；如需用于持续画像，请在下方单独确认图片处理权利"
   } catch (error) {
     clearQuickNotePhoto()
     byId("quick-note-status").textContent = error instanceof Error ? error.message : "暂时无法添加图片"
@@ -2437,11 +2501,15 @@ async function handleQuickNotePhoto(file) {
 }
 
 function isValidQuickNoteRecord(record) {
+  const hasImage = Boolean(
+    record?.hadImage === true ||
+    (typeof record?.imageData === "string" && record.imageData.startsWith("data:image/"))
+  )
   return Boolean(
     record &&
     typeof record.id === "string" &&
     typeof record.text === "string" &&
-    (record.text.trim().length > 0 || (typeof record.imageData === "string" && record.imageData.startsWith("data:image/")) || record.voiceDuration > 0) &&
+    (record.text.trim().length > 0 || hasImage || record.voiceDuration > 0) &&
     record.text.length <= QUICK_NOTE_MAX_LENGTH &&
     (record.imageData === undefined || (
       typeof record.imageData === "string" &&
@@ -2449,8 +2517,55 @@ function isValidQuickNoteRecord(record) {
       (record.imageData === "" || record.imageData.startsWith("data:image/"))
     )) &&
     Number.isFinite(record.createdAt) &&
+    (record.dateKey === undefined || /^\d{4}-\d{2}-\d{2}$/.test(record.dateKey)) &&
     (record.voiceDuration === undefined || (Number.isFinite(record.voiceDuration) && record.voiceDuration >= 0 && record.voiceDuration <= 300))
   )
+}
+
+function loadStoredQuickNotes() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) || "[]")
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT).map((record) => ({
+      id: record.id,
+      text: record.text,
+      imageData: "",
+      hadImage: record.hadImage === true,
+      imageRightsConfirmed: false,
+      voiceDuration: Number(record.voiceDuration) || 0,
+      createdAt: record.createdAt,
+      dateKey: typeof record.dateKey === "string" ? record.dateKey : memoryDateKey(record.createdAt)
+    }))
+  } catch (_error) {
+    return []
+  }
+}
+
+function persistQuickNotes(records) {
+  const stored = records.map((record) => ({
+    id: record.id,
+    text: record.text,
+    hadImage: record.hadImage === true || Boolean(record.imageData),
+    voiceDuration: Number(record.voiceDuration) || 0,
+    createdAt: record.createdAt,
+    dateKey: typeof record.dateKey === "string" ? record.dateKey : memoryDateKey(record.createdAt)
+  }))
+  try {
+    const serialized = JSON.stringify(stored)
+    window.localStorage.setItem(QUICK_NOTE_STORAGE_KEY, serialized)
+    return window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) === serialized
+  } catch (_error) {
+    return false
+  }
+}
+
+function removeStoredQuickNotes() {
+  try {
+    window.localStorage.removeItem(QUICK_NOTE_STORAGE_KEY)
+    return window.localStorage.getItem(QUICK_NOTE_STORAGE_KEY) === null
+  } catch (_error) {
+    return false
+  }
 }
 
 function readQuickNotes() {
@@ -2461,8 +2576,16 @@ function readQuickNotes() {
 }
 
 function writeQuickNotes(records) {
-  quickNoteRecords = records.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT)
+  const next = records.filter(isValidQuickNoteRecord).slice(0, QUICK_NOTE_LIMIT)
+  if (!persistQuickNotes(next)) return false
+  quickNoteRecords = next
   return true
+}
+
+function rebuildProfileAfterQuickNoteDeletion() {
+  const shouldRefresh = profileRuntime.consent.profilePersonalization
+  profileRuntime.clearProfile()
+  if (shouldRefresh) void queueProfileRefresh("notes")
 }
 
 function formatQuickNoteDate(timestamp) {
@@ -2474,7 +2597,7 @@ function formatQuickNoteDate(timestamp) {
   }).format(new Date(timestamp))
 }
 
-function saveQuickNote(text, imageData = "", voiceDuration = 0) {
+function saveQuickNote(text, imageData = "", voiceDuration = 0, imageRightsConfirmed = false) {
   const normalized = text.trim()
   if (!normalized && !imageData && !voiceDuration) return false
   const now = Date.now()
@@ -2483,11 +2606,16 @@ function saveQuickNote(text, imageData = "", voiceDuration = 0) {
     id: `note-${now}-${randomPart}`,
     text: normalized.slice(0, QUICK_NOTE_MAX_LENGTH),
     imageData,
+    hadImage: Boolean(imageData),
+    imageRightsConfirmed: Boolean(imageData) && imageRightsConfirmed,
     voiceDuration,
-    createdAt: now
+    createdAt: now,
+    dateKey: memoryDateKey(now)
   }
   quickNoteDeckOffset = 0
-  return writeQuickNotes([record, ...readQuickNotes()])
+  const saved = writeQuickNotes([record, ...readQuickNotes()])
+  if (saved) clearMonthlyMemoryCache()
+  return saved
 }
 
 function removeQuickNote(id) {
@@ -2495,11 +2623,54 @@ function removeQuickNote(id) {
   const next = records.filter((record) => record.id !== id)
   if (next.length === records.length) return
   if (writeQuickNotes(next)) {
+    clearMonthlyMemoryCache()
+    profiledQuickNoteImageSourceIds.delete(`quick-note-image:${id}`)
+    rebuildProfileAfterQuickNoteDeletion()
     quickNoteDeckOffset = next.length > 0 ? quickNoteDeckOffset % next.length : 0
     byId("quick-note-library-status").textContent = "已移除这条闪念，初印象也会随之更新"
     renderQuickNotes()
     renderInitialImpression()
     updateSettingsStorageState()
+  } else {
+    byId("quick-note-library-status").textContent = "浏览器未能删除这条本机闪念，请检查站点存储权限后重试"
+  }
+}
+
+function clearAllQuickNotes(event) {
+  const records = readQuickNotes()
+  if (records.length === 0) {
+    renderQuickNotes()
+    updateSettingsStorageState()
+    return
+  }
+
+  const button = event && event.currentTarget instanceof HTMLButtonElement
+    ? event.currentTarget
+    : null
+  if (button && button.dataset.confirming !== "true") {
+    const original = button.textContent
+    button.dataset.confirming = "true"
+    button.textContent = "再次点击，确认清空闪念"
+    schedule(() => {
+      if (!button.isConnected) return
+      button.dataset.confirming = "false"
+      button.textContent = original
+    }, 4000)
+    return
+  }
+
+  if (removeStoredQuickNotes()) {
+    quickNoteRecords = []
+    clearMonthlyMemoryCache()
+    profiledQuickNoteImageSourceIds.clear()
+    rebuildProfileAfterQuickNoteDeletion()
+    quickNoteDeckOffset = 0
+    renderQuickNotes()
+    renderInitialImpression()
+    updateSettingsStorageState()
+  } else {
+    byId("quick-note-library-status").textContent = "浏览器未能删除本机闪念，请检查站点存储权限后重试"
+    if (button) button.textContent = "删除失败，请重试"
   }
 }
 
@@ -2579,7 +2750,7 @@ function renderQuickNotes() {
     const label = document.createElement("span")
     const modalities = []
     if (record.text.trim()) modalities.push("文字")
-    if (record.imageData) modalities.push("图片")
+    if (record.imageData || record.hadImage) modalities.push("图片")
     if (record.voiceDuration > 0) modalities.push("语音")
     label.textContent = `${modalities.join(" · ")}闪念`
     const time = document.createElement("time")
@@ -2588,7 +2759,9 @@ function renderQuickNotes() {
     meta.append(label, time)
 
     const content = document.createElement("blockquote")
-    content.textContent = record.text.trim() || (record.voiceDuration > 0 ? "一段还没有转成文字的声音。" : "一张还没有解释的瞬间。")
+    content.textContent = record.text.trim() || (record.voiceDuration > 0
+      ? "一段还没有转成文字的声音。"
+      : "一张图片闪念（原图未保存）。")
     sheet.append(meta, content)
     if (record.voiceDuration > 0) {
       const voice = document.createElement("div")
@@ -2888,6 +3061,7 @@ function removeEchoRecord(id) {
   const next = records.filter((record) => record.id !== id)
   if (next.length === records.length) return
   if (writeEchoes(next)) {
+    clearMonthlyMemoryCache()
     renderEchoLibrary()
     updateDueEchoCard()
     updateSettingsStorageState()
@@ -2935,6 +3109,7 @@ function clearAllEchoes(event) {
   }
 
   if (writeEchoes([])) {
+    clearMonthlyMemoryCache()
     renderEchoLibrary()
     updateDueEchoCard()
     updateSettingsStorageState()
@@ -2990,6 +3165,410 @@ function updateDueEchoCard() {
   byId("due-echo-card").hidden = !hasDue
 }
 
+function memoryDateKey(timestamp) {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function memoryMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function memoryArchiveEntries() {
+  const now = Date.now()
+  const entries = []
+
+  readQuickNotes().forEach((record) => {
+    let copy = record.text.trim()
+    if (!copy && (record.imageData || record.hadImage)) copy = "一张图片闪念（原图未保存）"
+    if (!copy && record.voiceDuration > 0) copy = `一段 ${formatVoiceDuration(record.voiceDuration)} 的语音闪念`
+    entries.push({
+      id: `thought-${record.id}`,
+      sourceId: `quick-note:${record.id}`,
+      dateKey: record.dateKey || memoryDateKey(record.createdAt),
+      timestamp: record.createdAt,
+      type: "thought",
+      label: "闪念",
+      copy
+    })
+  })
+
+  readEchoes().forEach((record) => {
+    const isDue = record.dueAt <= now
+    const createdKey = memoryDateKey(record.createdAt)
+    const dueKey = memoryDateKey(record.dueAt)
+    entries.push({
+      id: `echo-created-${record.id}`,
+      sourceId: `echo:${record.id}`,
+      dateKey: createdKey,
+      timestamp: record.createdAt,
+      type: "echo",
+      label: "留给未来",
+      copy: isDue ? record.text : `一条回响正在封存，将在 ${formatEchoDate(record.dueAt)} 打开`,
+      sealed: !isDue
+    })
+    if (dueKey !== createdKey) {
+      entries.push({
+        id: `echo-due-${record.id}`,
+        sourceId: `echo:${record.id}`,
+        dateKey: dueKey,
+        timestamp: record.dueAt,
+        type: "echo",
+        label: isDue ? "回到今天" : "等待回响",
+        copy: isDue ? record.text : "这一天，会有一句话重新回到这里",
+        sealed: !isDue
+      })
+    }
+  })
+
+  return entries.sort((a, b) => a.timestamp - b.timestamp)
+}
+
+function renderMemoryDay(entries) {
+  const selectedDate = memorySelectedDateKey
+    ? new Date(`${memorySelectedDateKey}T12:00:00`)
+    : new Date()
+  byId("memory-day-label").textContent = new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "short"
+  }).format(selectedDate)
+  byId("memory-day-count").textContent = `${entries.length} 个片段`
+
+  const list = byId("memory-day-items")
+  list.replaceChildren()
+  if (entries.length === 0) {
+    const empty = document.createElement("p")
+    empty.className = "memory-day-empty"
+    empty.textContent = "这一天还没有存档。写下一点什么，它就会在这里亮起来。"
+    list.append(empty)
+  } else {
+    entries.slice(0, 3).forEach((entry) => {
+      const item = document.createElement("article")
+      item.className = "memory-day-item"
+      item.dataset.type = entry.type
+      const marker = document.createElement("span")
+      marker.setAttribute("aria-hidden", "true")
+      marker.textContent = entry.type === "echo" ? "⌁" : "＋"
+      const content = document.createElement("div")
+      const label = document.createElement("strong")
+      label.textContent = entry.label
+      const copy = document.createElement("p")
+      copy.textContent = entry.copy
+      content.append(label, copy)
+      item.append(marker, content)
+      list.append(item)
+    })
+  }
+  const more = byId("memory-day-more")
+  more.hidden = entries.length <= 3
+  more.textContent = entries.length > 3 ? `还有 ${entries.length - 3} 个片段，可从闪念或回响入口查看。` : ""
+}
+
+function readMonthlyMemoryCache() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MONTHLY_MEMORY_STORAGE_KEY) || "[]")
+    return Array.isArray(parsed) ? parsed.filter((item) => (
+      item && /^\d{4}-\d{2}$/.test(item.month) && typeof item.fingerprint === "string" && item.result
+    )).slice(0, 24) : []
+  } catch (_error) {
+    return []
+  }
+}
+
+function writeMonthlyMemoryCache(records) {
+  try {
+    window.localStorage.setItem(MONTHLY_MEMORY_STORAGE_KEY, JSON.stringify(records.slice(0, 24)))
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
+function clearMonthlyMemoryCache() {
+  memoryReflectionAbortController?.abort()
+  memoryReflectionAbortController = null
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
+  memoryReflectionFailedFingerprints.clear()
+  try {
+    window.localStorage.removeItem(MONTHLY_MEMORY_STORAGE_KEY)
+  } catch (_error) {
+    // The current local fallback remains available.
+  }
+}
+
+function monthlyReflectionText(value, maxLength, fallback = "") {
+  return typeof value === "string" && value.trim()
+    ? value.trim().replace(/\s+/g, " ").slice(0, maxLength)
+    : fallback
+}
+
+function sanitizeMonthlyReflection(result) {
+  return {
+    analysis_status: result?.analysis_status === "sufficient" ? "sufficient" : "limited",
+    title: monthlyReflectionText(result?.title, 120, "这个月留下了一些可继续理解的片段"),
+    summary: monthlyReflectionText(result?.summary, 1000, "这些片段只代表当月主动留下的内容。"),
+    highlights: Array.from(result?.highlights || []).slice(0, 3).map((item) => ({
+      label: monthlyReflectionText(item?.label, 50, "一个片段"),
+      reflection: monthlyReflectionText(item?.reflection, 260)
+    })).filter((item) => item.reflection),
+    gentle_question: monthlyReflectionText(result?.gentle_question, 220),
+    uncertainty: monthlyReflectionText(result?.uncertainty, 260, "这份回顾只依据当月主动保存的有限片段。")
+  }
+}
+
+function renderMonthlyReflectionContent(result, statusMessage, state = "ready") {
+  byId("memory-ai-title").textContent = result.title
+  byId("memory-ai-summary").textContent = result.summary
+  const highlights = byId("memory-ai-highlights")
+  highlights.replaceChildren()
+  result.highlights.forEach((item) => {
+    const article = document.createElement("article")
+    const label = document.createElement("strong")
+    label.textContent = item.label
+    const copy = document.createElement("span")
+    copy.textContent = item.reflection
+    article.append(label, copy)
+    highlights.append(article)
+  })
+  const question = byId("memory-ai-question")
+  question.hidden = !result.gentle_question
+  question.textContent = result.gentle_question ? `“${result.gentle_question}”` : ""
+  const status = byId("memory-ai-status")
+  status.textContent = `${statusMessage}${result.uncertainty ? ` · ${result.uncertainty}` : ""}`
+  status.dataset.state = state
+}
+
+function localMonthlyReflection(month, entries) {
+  const thoughts = entries.filter((entry) => entry.type === "thought")
+  const echoIds = new Set(entries.filter((entry) => entry.type === "echo").map((entry) => entry.sourceId))
+  const activeDays = new Set(entries.map((entry) => entry.dateKey)).size
+  return {
+    title: `${month.replace("-", " 年 ")} 月，留下 ${activeDays} 个有记录的日子`,
+    summary: thoughts.length + echoIds.size > 0
+      ? `本月日历里有 ${thoughts.length} 条闪念和 ${echoIds.size} 个未来回响。这里只做数量与日期整理，不推断你的心理状态。`
+      : "这个月还没有主动保存的片段，先保持空白也可以。",
+    highlights: [],
+    gentle_question: "这个月，有哪一天是你愿意轻轻记住的？",
+    uncertainty: "本地版本只整理日期和数量。"
+  }
+}
+
+function monthlyEntriesForModel(entries) {
+  const seenEchoes = new Set()
+  return entries.filter((entry) => {
+    if (entry.type !== "echo") return true
+    if (seenEchoes.has(entry.sourceId)) return false
+    seenEchoes.add(entry.sourceId)
+    return true
+  }).map((entry) => ({
+    date: entry.dateKey,
+    type: entry.type,
+    label: entry.type === "echo" ? (entry.sealed ? "未解封回响" : "已解封回响") : "闪念",
+    copy: entry.type === "echo"
+      ? (entry.sealed ? "当月有一条仍在封存的未来回响" : "当月有一条已经解封的未来回响")
+      : entry.copy
+  })).slice(-30)
+}
+
+function monthlyReflectionEvidence(month, entries) {
+  const modelEntries = monthlyEntriesForModel(entries)
+  const envelope = activeProfileEnvelope()
+  const profileForMonth = envelope?.generated_at?.slice(0, 7) === month
+    ? narrativeProfileContext(envelope)
+    : null
+  return {
+    modelEntries,
+    profileForMonth,
+    fingerprint: evidenceFingerprint({ month, entries: modelEntries, profile: profileForMonth })
+  }
+}
+
+function renderStoredOrLocalMonthlyReflection(month, entries) {
+  const { fingerprint } = monthlyReflectionEvidence(month, entries)
+  const cached = readMonthlyMemoryCache().find((item) => item.month === month && item.fingerprint === fingerprint)
+  const refreshButton = byId("memory-ai-refresh")
+  refreshButton.disabled = entries.length === 0
+  if (cached) {
+    refreshButton.textContent = "更新"
+    renderMonthlyReflectionContent(
+      sanitizeMonthlyReflection(cached.result),
+      `由 ${cached.model || "自定义模型"} 生成并保存在本机`
+    )
+    return
+  }
+  refreshButton.textContent = "生成"
+  renderMonthlyReflectionContent(
+    localMonthlyReflection(month, entries),
+    entries.length > 0
+      ? "当前仅显示本地整理；点“生成”后才会按授权发送当月文字化片段"
+      : "没有片段，因此不需要调用模型",
+    "idle"
+  )
+}
+
+async function maybeGenerateMonthlyReflection(month, entries, { force = false } = {}) {
+  const { modelEntries, profileForMonth, fingerprint } = monthlyReflectionEvidence(month, entries)
+  const cached = readMonthlyMemoryCache().find((item) => item.month === month && item.fingerprint === fingerprint)
+  if (cached && !force) {
+    renderMonthlyReflectionContent(sanitizeMonthlyReflection(cached.result), `由 ${cached.model || "自定义模型"} 生成并保存在本机`)
+    return cached
+  }
+
+  const fallback = localMonthlyReflection(month, entries)
+  if (modelEntries.length === 0) {
+    renderMonthlyReflectionContent(fallback, "没有片段，因此没有调用模型", "idle")
+    return null
+  }
+  if (!profileRuntime.consent.serviceProcessing || !profileRuntime.consent.profilePersonalization || !hasApiSettings()) {
+    renderMonthlyReflectionContent(fallback, "开启自定义 API 与持续画像后可生成月度回顾", "idle")
+    return null
+  }
+  if (force) memoryReflectionFailedFingerprints.delete(fingerprint)
+  if (!force && memoryReflectionFailedFingerprints.has(fingerprint)) {
+    renderMonthlyReflectionContent(fallback, "上次模型生成失败；可点“更新”手动重试", "error")
+    return null
+  }
+  if (!force && memoryReflectionRunningFingerprint === fingerprint) return null
+
+  memoryReflectionAbortController?.abort()
+  memoryReflectionAbortController = new AbortController()
+  memoryReflectionRunningFingerprint = fingerprint
+  const request = ++memoryReflectionRequest
+  renderMonthlyReflectionContent(fallback, "正在后台生成本月回顾；日历仍可继续使用", "updating")
+  byId("memory-ai-refresh").disabled = true
+  try {
+    const response = await generateMonthlyReflection({
+      month,
+      entries: modelEntries,
+      profileContext: profileForMonth,
+      signal: memoryReflectionAbortController.signal
+    })
+    if (
+      request !== memoryReflectionRequest ||
+      memoryMonthKey(memoryMonthCursor) !== month ||
+      !profileRuntime.consent.serviceProcessing ||
+      !profileRuntime.consent.profilePersonalization
+    ) {
+      return null
+    }
+    if (response.result?.safety_notice?.level && response.result.safety_notice.level !== "not_indicated") {
+      renderMonthlyReflectionContent(fallback, "模型内容已转为安全支持提示，未写入本机回顾缓存", "warning")
+      openSafety(null)
+      return null
+    }
+    const result = sanitizeMonthlyReflection(response.result)
+    const records = readMonthlyMemoryCache().filter((item) => item.month !== month)
+    records.unshift({ month, fingerprint, generatedAt: response.generated_at, model: response.model, result })
+    writeMonthlyMemoryCache(records)
+    if (request === memoryReflectionRequest && memoryMonthKey(memoryMonthCursor) === month) {
+      renderMonthlyReflectionContent(result, `由 ${response.model} 生成并保存在本机`)
+    }
+    return result
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "client_aborted") && request === memoryReflectionRequest) {
+      memoryReflectionFailedFingerprints.add(fingerprint)
+      renderMonthlyReflectionContent(
+        cached ? sanitizeMonthlyReflection(cached.result) : fallback,
+        `模型回顾暂时不可用：${error?.message || "未知错误"}`,
+        "error"
+      )
+    }
+    return null
+  } finally {
+    if (request === memoryReflectionRequest) {
+      memoryReflectionAbortController = null
+      memoryReflectionRunningFingerprint = ""
+      byId("memory-ai-refresh").disabled = false
+    }
+  }
+}
+
+function renderMemoryArchive({ forceReflection = false, generateReflection = false } = {}) {
+  const year = memoryMonthCursor.getFullYear()
+  const month = memoryMonthCursor.getMonth()
+  const prefix = memoryMonthKey(memoryMonthCursor)
+  const entries = memoryArchiveEntries()
+  const entriesInMonth = entries.filter((entry) => entry.dateKey.startsWith(prefix))
+  const entriesByDate = new Map()
+  entriesInMonth.forEach((entry) => {
+    const dayEntries = entriesByDate.get(entry.dateKey) || []
+    dayEntries.push(entry)
+    entriesByDate.set(entry.dateKey, dayEntries)
+  })
+
+  const todayKey = memoryDateKey(Date.now())
+  if (!memorySelectedDateKey.startsWith(prefix)) {
+    const activeDates = Array.from(entriesByDate.keys()).sort()
+    memorySelectedDateKey = todayKey.startsWith(prefix)
+      ? todayKey
+      : (activeDates[activeDates.length - 1] || `${prefix}-01`)
+  }
+
+  byId("memory-month-label").textContent = `${year} / ${month + 1}`
+  byId("memory-calendar").setAttribute("aria-label", `${year}年${month + 1}月时光记录`)
+  const calendar = byId("memory-calendar")
+  calendar.replaceChildren()
+  const leadingDays = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  for (let index = 0; index < leadingDays; index += 1) {
+    const spacer = document.createElement("span")
+    spacer.className = "memory-day-spacer"
+    spacer.setAttribute("aria-hidden", "true")
+    calendar.append(spacer)
+  }
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = `${prefix}-${String(day).padStart(2, "0")}`
+    const dayEntries = entriesByDate.get(dateKey) || []
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "memory-day"
+    button.classList.toggle("has-thought", dayEntries.some((entry) => entry.type === "thought"))
+    button.classList.toggle("has-echo", dayEntries.some((entry) => entry.type === "echo"))
+    button.classList.toggle("is-today", dateKey === todayKey)
+    button.classList.toggle("is-selected", dateKey === memorySelectedDateKey)
+    button.setAttribute("role", "gridcell")
+    button.setAttribute("aria-selected", String(dateKey === memorySelectedDateKey))
+    button.setAttribute("aria-label", `${month + 1}月${day}日，${dayEntries.length}个片段`)
+    const number = document.createElement("span")
+    number.textContent = String(day)
+    button.append(number)
+    button.addEventListener("click", () => {
+      memorySelectedDateKey = dateKey
+      renderMemoryArchive()
+    })
+    calendar.append(button)
+  }
+
+  const thoughtCount = entriesInMonth.filter((entry) => entry.type === "thought").length
+  const echoCount = new Set(entriesInMonth.filter((entry) => entry.type === "echo").map((entry) => entry.sourceId)).size
+  byId("memory-month-total").textContent = thoughtCount + echoCount > 0
+    ? `${thoughtCount} 条闪念 · ${echoCount} 个回响`
+    : "这个月还没有留下记录"
+  byId("memory-month-next").disabled = prefix >= memoryMonthKey(new Date())
+  renderMemoryDay(entriesByDate.get(memorySelectedDateKey) || [])
+  if (generateReflection) {
+    void maybeGenerateMonthlyReflection(prefix, entriesInMonth, { force: forceReflection })
+  } else {
+    renderStoredOrLocalMonthlyReflection(prefix, entriesInMonth)
+  }
+}
+
+function shiftMemoryMonth(offset) {
+  const next = new Date(memoryMonthCursor.getFullYear(), memoryMonthCursor.getMonth() + offset, 1)
+  if (memoryMonthKey(next) > memoryMonthKey(new Date())) return
+  memoryReflectionAbortController?.abort()
+  memoryReflectionRequest += 1
+  memoryReflectionRunningFingerprint = ""
+  memoryMonthCursor = next
+  memorySelectedDateKey = ""
+  renderMemoryArchive()
+}
+
 function updateSettingsStorageState() {
   const button = byId("settings-clear-echoes")
   const count = readEchoes().length
@@ -3000,9 +3579,14 @@ function updateSettingsStorageState() {
   const cardCount = readTideCardRecords().length
   cardButton.disabled = cardCount === 0
   cardButton.textContent = cardCount === 0 ? "卡槽目前为空" : `清空潮笺卡槽（${cardCount}）`
+  const quickNoteButton = byId("settings-clear-quick-notes")
+  const quickNoteCount = readQuickNotes().length
+  quickNoteButton.disabled = quickNoteCount === 0
+  quickNoteButton.textContent = quickNoteCount === 0 ? "闪念目前为空" : `清空随手闪念（${quickNoteCount}）`
   byId("my-card-slot-count").textContent = cardCount === 0 ? "还没有收下潮笺" : `已经收下 ${cardCount} 张潮笺`
   byId("my-echo-count").textContent = count === 0 ? "还没有留给未来的话" : `已经保存 ${count} 条回响`
   renderInitialImpression()
+  renderMemoryArchive()
   renderAiState()
 }
 
@@ -3155,7 +3739,7 @@ byId("quick-note-input").addEventListener("input", (event) => {
   event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`
   byId("quick-note-count").textContent = `${length} / ${QUICK_NOTE_MAX_LENGTH}`
   updateQuickNoteSaveState()
-  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = "提交后自动保存，并用于更新初印象与个性化内容"
+  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
 })
 ;[byId("quick-note-photo-input"), byId("quick-note-camera-input")].forEach((input) => {
   input.addEventListener("change", (event) => {
@@ -3167,6 +3751,11 @@ byId("remove-quick-note-photo").addEventListener("click", () => {
   clearQuickNotePhoto()
   byId("quick-note-status").textContent = "图片已移除，仍可以留下文字或语音"
 })
+byId("quick-note-image-rights-confirmed").addEventListener("change", (event) => {
+  byId("quick-note-status").textContent = event.currentTarget.checked
+    ? "已确认：若持续画像已开启，这张图最多发送给自定义模型端点一次"
+    : "图片只在本次页面预览，不会发送给模型"
+})
 byId("quick-note-voice").addEventListener("click", toggleQuickNoteVoiceRecording)
 byId("remove-quick-note-voice").addEventListener("click", () => {
   clearQuickNoteVoice()
@@ -3177,7 +3766,12 @@ byId("quick-note-form").addEventListener("submit", (event) => {
   if (quickNoteVoiceStartedAt) toggleQuickNoteVoiceRecording()
   const input = byId("quick-note-input")
   if (!input.value.trim() && !pendingQuickNoteImage && pendingQuickNoteVoiceDuration === 0) return
-  if (!saveQuickNote(input.value, pendingQuickNoteImage, pendingQuickNoteVoiceDuration)) {
+  if (!saveQuickNote(
+    input.value,
+    pendingQuickNoteImage,
+    pendingQuickNoteVoiceDuration,
+    byId("quick-note-image-rights-confirmed").checked
+  )) {
     byId("quick-note-status").textContent = "暂时无法提交，请稍后再试"
     return
   }
@@ -3409,6 +4003,10 @@ byId("finish-flow").addEventListener("click", finishFlow)
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-tide-cards").addEventListener("click", clearAllTideCards)
+byId("settings-clear-quick-notes").addEventListener("click", clearAllQuickNotes)
+byId("memory-month-previous").addEventListener("click", () => shiftMemoryMonth(-1))
+byId("memory-month-next").addEventListener("click", () => shiftMemoryMonth(1))
+byId("memory-ai-refresh").addEventListener("click", () => renderMemoryArchive({ forceReflection: true, generateReflection: true }))
 byId("custom-api-save").addEventListener("click", saveCustomApiSettings)
 byId("custom-api-test").addEventListener("click", () => void testCustomApiSettings())
 byId("custom-api-clear").addEventListener("click", clearCustomApiSettings)
@@ -3426,7 +4024,13 @@ byId("ai-service-consent").addEventListener("change", (event) => {
       ? profileRuntime.consent.profilePersonalization
       : false
   })
+  if (!event.currentTarget.checked) {
+    memoryReflectionAbortController?.abort()
+    memoryReflectionRequest += 1
+    memoryReflectionRunningFingerprint = ""
+  }
   renderAiState()
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
 })
 byId("ai-profile-consent").addEventListener("change", (event) => {
   profileRuntime.setConsent({
@@ -3434,12 +4038,21 @@ byId("ai-profile-consent").addEventListener("change", (event) => {
     profilePersonalization: event.currentTarget.checked
   })
   renderAiState()
-  if (event.currentTarget.checked) void queueProfileRefresh("complete")
+  if (event.currentTarget.checked) {
+    void queueProfileRefresh("complete")
+  } else {
+    memoryReflectionAbortController?.abort()
+    memoryReflectionRequest += 1
+    memoryReflectionRunningFingerprint = ""
+  }
+  if (activeScreenId === "settings-screen") renderMemoryArchive()
 })
 byId("settings-clear-profile").addEventListener("click", () => {
+  clearMonthlyMemoryCache()
   profileRuntime.clearProfile()
   renderAiState()
   renderTodayReport()
+  renderMemoryArchive()
 })
 
 byId("keep-tide-quote").addEventListener("click", () => closeTideQuote(true))
@@ -3517,6 +4130,7 @@ document.addEventListener("keydown", (event) => {
   trapModalFocus(event)
 })
 
+quickNoteRecords = loadStoredQuickNotes()
 renderNotes()
 initializeAiIntegration()
 updateDueEchoCard()

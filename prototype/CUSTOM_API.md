@@ -45,7 +45,7 @@ Authorization: Bearer <API_KEY>
 
 ### `POST {baseUrl}/chat/completions`
 
-画像、陪伴对话与叙事生成都使用此端点。
+画像、陪伴对话、叙事生成与月度回顾都使用此端点。
 
 请求头：
 
@@ -214,7 +214,71 @@ Content-Type: application/json
 
 `cards` 必须正好 6 项。`tone` 为 `guide`、`body`、`friend`、`standard`、`future`、`self`。模型只生成文案；潮位、信号、满潮阈值和收藏逻辑不发送给模型控制。
 
-## 6. 错误格式
+## 6. 画像驱动月度回顾任务
+
+月历本身完全在本地生成，不调用模型；打开「我的」也不会自动发送内容。月度模型回顾只有在用户主动点「生成」、已配置 API、允许 AI 调用、开启持续画像，且所选月份存在片段时才会请求。前端最多发送所选月份最近的 30 个文字化条目，同一未来回响只发送一次状态占位；不会发送其他月份、图片 base64、音频文件或回响正文。
+
+用户 message 的任务数据形如：
+
+```json
+{
+  "locale": "zh-CN",
+  "month": "2026-07",
+  "saved_month_entries": [
+    {
+      "date": "2026-07-18",
+      "type": "thought",
+      "label": "闪念",
+      "copy": "今天想给事情一个停点"
+    },
+    {
+      "date": "2026-07-20",
+      "type": "echo",
+      "label": "未解封回响",
+      "copy": "当月有一条仍在封存的未来回响"
+    }
+  ],
+  "reflective_profile_context": {
+    "headline": "正在寻找结束边界"
+  }
+}
+```
+
+`reflective_profile_context` 可以为 `null`。当前应用仅在最新画像的生成月份与所选月份一致时附带压缩后的画像上下文，避免用今天的画像替旧月份补写经历。
+
+任务使用 `response_format.json_schema.name = "xinchao_monthly_reflection"` 且 `strict: true`，返回：
+
+```json
+{
+  "analysis_status": "limited",
+  "title": "七月留下了几个愿意停一下的片段",
+  "summary": "这些内容只代表本月主动留下的有限记录。",
+  "highlights": [
+    {
+      "label": "停点",
+      "reflection": "几条闪念提到了把事情缩小。"
+    }
+  ],
+  "gentle_question": "哪一天值得轻轻记住？",
+  "uncertainty": "没有覆盖本月所有经历。",
+  "safety_notice": {
+    "level": "not_indicated",
+    "message": ""
+  }
+}
+```
+
+约束：
+
+- `analysis_status` 为 `limited` 或 `sufficient`；材料稀疏时必须为 `limited`；
+- `highlights` 最多 3 条，不得把记录频率解释成人格、诊断或确定性因果；
+- `gentle_question` 只给一个可跳过的问题；
+- `uncertainty` 必须明确只依据当月主动保存的有限片段；
+- `safety_notice.level` 与画像、陪伴对话任务使用相同枚举；异常安全级别不会写入月度缓存。
+
+客户端会对标题、摘要、数组、长度及安全对象再次校验和清洗。成功结果按月份和证据指纹写入本机 `xinchao.monthly-memory.v1`，最多保留 24 个月；相同证据直接复用，用户点「更新」时可绕过缓存。失败时不影响本地月历，并回退到仅统计日期与数量的本地回顾。
+
+## 7. 错误格式
 
 建议使用 OpenAI 风格错误：
 
@@ -230,7 +294,7 @@ Content-Type: application/json
 
 前端把 408、425、429 和 5xx 标为可重试；模型请求默认 130 秒超时，连接测试默认 15 秒。超时、取消、无效 JSON、模型 refusal、图片未形成观察都会显示明确错误并保留本地降级流程。
 
-## 7. CORS 与 HTTPS
+## 8. CORS 与 HTTPS
 
 浏览器会先发送预检。服务商至少应返回：
 
@@ -243,9 +307,23 @@ Vary: Origin
 
 本地开发可按需允许 `http://localhost:<port>`。若使用凭据头，不要在生产环境无条件反射任意 Origin。HTTPS 页面不能通过浏览器调用 HTTP API；这属于浏览器安全边界，纯前端代码无法绕过。
 
-## 8. 数据与日志
+## 9. 本机数据、缓存与服务商日志
 
 - Key 只从本机配置读取并发给配置的 origin；请求使用 `credentials: omit`、`cache: no-store`、`referrerPolicy: no-referrer`；
-- 心潮不保存原图和聊天原文，但模型服务商是否记录请求由服务商政策决定；
+- `xinchao.quick-notes.v1` 只持久化闪念 ID、文字、时间戳、日历日期和图片/语音表达类型元数据；图片 base64 会在写入前剔除，语音当前不产生录音文件；
+- 独立图片闪念只有逐图确认处理权利后，才会在持续画像开启时发送一次；超过端点单次图片上限的图片由异步单飞队列分批处理；
+- `xinchao.monthly-memory.v1` 保存结构化月度回顾、证据指纹、模型名和生成时间，不保存发送给模型的原始图片或音频；
+- 心潮不持久化原图、音频文件和聊天原文，但模型服务商是否记录明确授权发送的请求由服务商政策决定；
 - 生产服务商应关闭不必要的正文日志、训练复用和长期保留，并提供 Key 撤销与用量限制；
 - 不要把 Authorization、base64 图片、用户文本或完整模型响应写入浏览器控制台和服务日志。
+
+与这些任务直接相关的本机键：
+
+| 键 | 内容 |
+| --- | --- |
+| `xinchao.custom-api.v1` | Base URL、API Key、模型与图片精度 |
+| `xinchao.ai-consent.v1` | AI 调用与持续画像授权 |
+| `xinchao.reflective-profile.v1` | 多模态文字画像与画像证据指纹 |
+| `xinchao.quick-notes.v1` | 闪念文字、日期和表达类型元数据 |
+| `xinchao.future-echoes.v1` | 用户主动保存的未来回响与解封时间 |
+| `xinchao.monthly-memory.v1` | 最多 24 个月的模型回顾缓存 |

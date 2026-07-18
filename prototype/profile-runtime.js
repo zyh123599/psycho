@@ -275,6 +275,7 @@ export class ProfileRuntime {
     this.capabilities = { ...DEFAULT_API_CAPABILITIES }
     this.running = null
     this.queuedReason = null
+    this.queuedGeneration = null
     this.controller = null
     this.generation = 0
   }
@@ -303,6 +304,7 @@ export class ProfileRuntime {
       || previous.profilePersonalization && !this.consent.profilePersonalization
     if (revoked) {
       this.queuedReason = null
+      this.queuedGeneration = null
       this.generation += 1
       this.controller?.abort()
     }
@@ -312,6 +314,7 @@ export class ProfileRuntime {
 
   clearProfile() {
     this.queuedReason = null
+    this.queuedGeneration = null
     this.generation += 1
     this.controller?.abort()
     this.profileEnvelope = null
@@ -320,12 +323,53 @@ export class ProfileRuntime {
     this.onStatus({ state: "idle", message: "本机多模态文字画像已删除" })
   }
 
+  forgetSources(sourceIds) {
+    const removed = new Set(Array.from(sourceIds || []).filter((item) => typeof item === "string" && item))
+    if (removed.size === 0) return this.profileEnvelope
+    this.queuedReason = null
+    this.queuedGeneration = null
+    this.generation += 1
+    this.controller?.abort()
+    if (!this.profileEnvelope?.profile) return this.profileEnvelope
+    const profile = this.profileEnvelope.profile
+    const scrubInsights = (items) => Array.from(items || []).map((item) => {
+      const original = Array.isArray(item.evidence_source_ids) ? item.evidence_source_ids : []
+      const evidenceSourceIds = original.filter((sourceId) => !removed.has(sourceId))
+      if (original.length > 0 && evidenceSourceIds.length === 0) return null
+      return { ...item, evidence_source_ids: evidenceSourceIds }
+    }).filter(Boolean)
+    const next = {
+      ...this.profileEnvelope,
+      last_evidence_fingerprint: null,
+      profile: {
+        ...profile,
+        current_state: scrubInsights(profile.current_state),
+        recurring_patterns: scrubInsights(profile.recurring_patterns),
+        strengths_and_resources: scrubInsights(profile.strengths_and_resources),
+        needs_and_preferences: scrubInsights(profile.needs_and_preferences),
+        multimodal_observations: Array.from(profile.multimodal_observations || []).filter((item) => (
+          !Array.from(item.source_ids || []).some((sourceId) => removed.has(sourceId))
+        )),
+        uncertainties: uniqueStrings([
+          ...(profile.uncertainties || []),
+          "用户已删除部分来源，相关观察已从本机画像中移除；整体总结将在下一次更新时继续修正。"
+        ], 6, 240)
+      }
+    }
+    this.profileEnvelope = next
+    writeJson(PROFILE_STORAGE_KEY, next)
+    this.onProfile(next, "source-deleted", null)
+    this.onStatus({ state: "ready", message: "已从本机画像移除被删除来源的相关观察" })
+    return next
+  }
+
   refresh(reason = "interaction") {
     if (!this.consent.serviceProcessing || !this.consent.profilePersonalization) {
       return Promise.resolve(null)
     }
     if (this.running) {
       this.queuedReason = reason
+      this.queuedGeneration = this.generation
       this.onStatus({ state: "queued", message: "新变化已合并到下一次画像更新", reason })
       return this.running
     }
@@ -409,8 +453,10 @@ export class ProfileRuntime {
       this.controller = null
       this.running = null
       const queued = this.queuedReason
+      const queuedGeneration = this.queuedGeneration
       this.queuedReason = null
-      if (queued && this.consent.profilePersonalization && generation === this.generation) {
+      this.queuedGeneration = null
+      if (queued && this.consent.profilePersonalization && queuedGeneration === this.generation) {
         globalThis.queueMicrotask(() => this.refresh(queued))
       }
     }
