@@ -1,5 +1,5 @@
 {
   "appId": "com.xinchao.psycho",
   "appName": "心潮",
-  "webDir": "prototype"
+  "webDir": "dist"
 }

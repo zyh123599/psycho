@@ -9,18 +9,46 @@
 | V0.1 | [`prototype-v1/`](prototype-v1/) | Reigns 式二元选择卡与公开四维状态，作为冻结对比基线 |
 | V0.2 | [`prototype/`](prototype/) | 闪念便贴、主题确认、多章节选择、三轮回应、微行动与未来回响 |
 
-两个版本都是无需构建的 HTML/CSS/JavaScript 原型。具体预览方式、数据处理和安全边界见各目录 README。
+两个版本的界面源码都是 HTML/CSS/JavaScript。V0.2 同时作为 Ionic + Capacitor 应用的 Web 源码；具体数据处理和安全边界见各目录 README。
 
-## Android 应用
+## Ionic + Capacitor 应用
 
-当前 V0.2 已接入 Capacitor 8，Android 原生工程位于 `android/`，应用 ID 为
-`com.xinchao.psycho`。首次拉取代码后安装依赖并构建调试包：
+当前 V0.2 已按 Capacitor 官方的 Ionic 集成流程整理为跨平台项目：
+
+- `prototype/`：HTML/CSS/JavaScript 界面源码
+- `dist/`：Vite 生成的 Web 构建产物，不提交到 Git
+- `capacitor.config.json`：应用名、应用 ID 和 Web 资源目录
+- `.github/workflows/mobile-build.yml`：在云端临时生成 Android、iOS 工程并打包
+
+仓库不保存 `android/` 和 `ios/` 目录。每次移动端构建都由 GitHub Actions 根据
+Capacitor 配置重新生成原生工程，避免在仓库里维护大量平台文件。
+
+应用 ID 为 `com.xinchao.psycho`。首次拉取代码后安装依赖：
 
 ```bash
 npm install
-npm run android:build
 ```
 
-生成的 APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。该文件使用
-Android 调试证书签名，可直接用于本地安装测试；发布到应用商店前需要配置正式签名、
-应用图标和发布版本号。
+### Web 开发
+
+```bash
+npm run dev
+npm run build
+```
+
+### GitHub Actions 移动端打包
+
+进入 GitHub 仓库的 **Actions → Build mobile apps → Run workflow**，一次运行会并行生成：
+
+- `xinchao-android-debug`：包含可安装的 Android 调试 APK
+- `xinchao-ios-simulator`：包含可在 iOS Simulator 运行的 `.app` 压缩包
+
+推送名称以 `v` 开头的 Git 标签（例如 `v0.1.0`）也会自动触发构建。完成后在该次
+Action 页面底部的 **Artifacts** 区域下载产物。
+
+iOS 真机安装包和 App Store 包必须使用 Apple 证书及 Provisioning Profile 签名。
+当前工作流不保存签名密钥，因此默认产出无需签名的模拟器版本；Android 默认产出调试版 APK。
+
+项目已安装 Ionic Framework，以及官方指南推荐的 `app`、`haptics`、`keyboard`、
+`status-bar` 四个 Capacitor 插件。相关命令来自
+[Using Capacitor with Ionic Framework](https://capacitorjs.com/docs/getting-started/with-ionic)。

@@ -221,9 +221,6 @@ __marimo__/
 node_modules/
 .gradle-home/
 
-# Capacitor / Android local build files
-android/.gradle/
-android/.idea/
-android/local.properties
-android/app/build/
-android/build/
+# Native projects are generated only inside GitHub Actions.
+/android/
+/ios/

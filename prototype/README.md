@@ -6,14 +6,14 @@
 
 ## 本地预览
 
-在终端运行：
+在仓库根目录运行：
 
 ```bash
-cd prototype
-python3 -m http.server 4173 --bind 127.0.0.1
+npm install
+npm run dev
 ```
 
-然后访问 [http://127.0.0.1:4173/](http://127.0.0.1:4173/)。停止预览时，在终端按 `Control-C`。
+按照终端显示的地址打开页面。停止预览时，在终端按 `Control-C`。
 
 ## V0.2 完整主线
 
