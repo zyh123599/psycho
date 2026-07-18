@@ -11,6 +11,22 @@
 
 两个版本的界面源码都是 HTML/CSS/JavaScript。V0.2 同时作为 Ionic + Capacitor 应用的 Web 源码；具体数据处理和安全边界见各目录 README。
 
+## FastAPI 后端
+
+多模态、非诊断性心理画像后端位于 [`backend/`](backend/)，使用 Python 3.12、uv、
+FastAPI 和 Pydantic v2。它支持文本、图片与 App 结构化交互信号，并已提供 Swagger/ReDoc、
+完整 API 文档和可复用的前端调用示例：
+
+```bash
+cd backend
+uv sync --all-groups
+uv run uvicorn psycho_backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+详细配置、安全边界和启动方式见 [`backend/README.md`](backend/README.md)，前端接口契约见
+[`backend/docs/API.md`](backend/docs/API.md)。真实模型密钥只放在被 Git 忽略的 `backend/.env`，
+不能写入网页或 Android 包。
+
 ## Ionic + Capacitor 应用
 
 当前 V0.2 已按 Capacitor 官方的 Ionic 集成流程整理为跨平台项目：
