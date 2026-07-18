@@ -14,9 +14,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from psycho_backend import __version__
 from psycho_backend.api import router
+from psycho_backend.companion_api import router as companion_router
+from psycho_backend.companion_llm import OpenAICompanionLLM
+from psycho_backend.companion_service import CompanionService
 from psycho_backend.config import Settings, get_settings
 from psycho_backend.errors import PublicError
-from psycho_backend.llm import OpenAIProfileLLM
 from psycho_backend.service import ProfileService
 
 logger = logging.getLogger(__name__)
@@ -76,6 +78,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     profile_service: ProfileService | None = None,
+    companion_service: CompanionService | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     logging.basicConfig(
@@ -85,15 +88,28 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        owned_llm: OpenAIProfileLLM | None = None
+        owned_llm: OpenAICompanionLLM | None = None
+        if profile_service is None or companion_service is None:
+            owned_llm = OpenAICompanionLLM(runtime_settings)
+
         if profile_service is None:
-            owned_llm = OpenAIProfileLLM(runtime_settings)
+            assert owned_llm is not None
             app.state.profile_service = ProfileService(
                 settings=runtime_settings,
                 llm=owned_llm,
             )
         else:
             app.state.profile_service = profile_service
+
+        if companion_service is None:
+            assert owned_llm is not None
+            app.state.companion_service = CompanionService(
+                settings=runtime_settings,
+                llm=owned_llm,
+            )
+        else:
+            app.state.companion_service = companion_service
+
         try:
             yield
         finally:
@@ -104,8 +120,7 @@ def create_app(
         title=runtime_settings.app_name,
         version=__version__,
         description=(
-            "面向心潮 App 的多模态、非诊断性反思画像服务。"
-            "原始输入只在单次请求内处理，默认不持久化。"
+            "面向心潮 App 的多模态反思画像与支持性对话服务。原始输入只在单次请求内处理，不持久化。"
         ),
         docs_url="/docs",
         redoc_url="/redoc",
@@ -144,6 +159,12 @@ def create_app(
             response = await call_next(request)
 
         response.headers["X-Request-ID"] = request_id
+        if request.url.path in {
+            "/api/v1/companion/respond",
+            "/api/v1/profiles/analyze",
+        }:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "request_complete method=%s path=%s status=%s duration_ms=%.1f request_id=%s",
@@ -234,6 +255,7 @@ def create_app(
         }
 
     app.include_router(router)
+    app.include_router(companion_router)
     # 最后添加使 CORS 成为最外层用户中间件，连大小限制和错误响应也带正确跨域头。
     app.add_middleware(
         CORSMiddleware,

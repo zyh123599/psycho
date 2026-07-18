@@ -2,10 +2,12 @@
   "name": "psycho-capacitor",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "心潮心理叙事原型的 Ionic + Capacitor 跨平台应用",
   "scripts": {
     "dev": "ionic serve",
     "build": "ionic build",
+    "test:frontend": "node --test prototype/tests/*.test.mjs",
     "preview": "vite preview",
     "ionic:serve": "vite --host 0.0.0.0",
     "ionic:build": "vite build",

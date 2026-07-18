@@ -171,6 +171,7 @@ def test_text_analysis_returns_valid_envelope() -> None:
     assert body["model"] == "gpt-5.6-sol"
     assert body["modalities_used"] == ["text"]
     assert body["usage"]["total_tokens"] == 150
+    assert response.headers["Cache-Control"] == "no-store"
     assert len(llm.calls) == 1
 
 

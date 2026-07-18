@@ -49,7 +49,7 @@
               <i aria-hidden="true">→</i>
             </button>
           </div>
-          <p class="privacy-line"><span aria-hidden="true">⌁</span> 当前原型不上传或保存聊天 · 随时可以停下</p>
+          <p class="privacy-line" id="today-privacy-line"><span aria-hidden="true">⌁</span> AI 尚未启用；当前使用本地内容 · 随时可以停下</p>
 
           <aside class="due-echo-card" id="due-echo-card" hidden>
             <span class="tiny-orb" aria-hidden="true"></span>
@@ -118,11 +118,27 @@
             <button class="text-button" id="use-note-example" type="button">一键使用示例</button>
           </div>
 
+          <section class="note-image-upload" aria-labelledby="note-image-title">
+            <div>
+              <strong id="note-image-title">补充图片线索（可选）</strong>
+              <small>手写记录、截图或作品；不会根据脸、表情或外貌推断心理状态</small>
+            </div>
+            <label class="image-picker" for="note-images"><span aria-hidden="true">＋</span>选择图片</label>
+            <input id="note-images" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+            <div class="note-image-list" id="note-image-list"></div>
+            <label class="image-rights" id="image-rights-row" for="images-rights-confirmed" hidden>
+              <input id="images-rights-confirmed" type="checkbox" />
+              <span>我确认有权处理这些图片，并同意在开启持续画像后将其发送给 AI 端点一次</span>
+            </label>
+            <p id="note-image-status" role="status">可选，最多 4 张；图片不会写入本地存储</p>
+          </section>
+
           <label class="privacy-toggle" for="notes-personalize">
             <input id="notes-personalize" type="checkbox" checked />
             <span class="toggle-track" aria-hidden="true"><i></i></span>
             <span><strong>参与本次梳理</strong><small>关闭后不用于生成主题；离开本次体验即清除</small></span>
           </label>
+          <p class="profile-sync-status" id="notes-ai-status" role="status">尚未启用持续画像</p>
 
           <div class="sticky-footer">
             <p class="form-hint" id="notes-hint" role="status">写满至少两张，就可以继续</p>
@@ -270,7 +286,7 @@
         <section class="screen chat-screen" id="chat-screen" aria-labelledby="chat-title" hidden>
           <header class="flow-header">
             <button class="back-button" id="chat-back" type="button" aria-label="返回上一页">←</button>
-            <span class="prototype-pill">情绪陪伴 · 演示</span>
+            <span class="prototype-pill">情绪陪伴 · AI</span>
             <button class="icon-button" type="button" data-open-safety aria-label="查看体验边界">i</button>
           </header>
 
@@ -279,7 +295,7 @@
             <div><p class="eyebrow" id="chat-kicker">第二章 · 对话</p><h1 id="chat-title" tabindex="-1">和潮伴聊一会儿</h1><p id="chat-subtitle">你可以纠正我、跳过问题，或随时结束。</p></div>
           </div>
 
-          <aside class="chat-boundary"><span aria-hidden="true">i</span><p>潮伴可以陪你梳理感受，但不能诊断、治疗或替代专业帮助。当前是本地演示回复。</p></aside>
+          <aside class="chat-boundary"><span aria-hidden="true">i</span><p>潮伴可以陪你梳理感受，但不能诊断、治疗或替代专业帮助。AI 服务关闭或暂时不可用时会明确标注本地降级回复。</p></aside>
 
           <div class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="与潮伴的对话"></div>
 
@@ -463,13 +479,36 @@
             <h1 id="settings-title" tabindex="-1">我的</h1>
             <p>你决定留下什么，也可以随时把它带走。</p>
           </div>
+          <section class="settings-card ai-settings-card">
+            <div class="settings-title-row">
+              <div><h2>AI 与持续画像</h2><p>两项授权彼此独立，关闭后立即停止新的网络请求。</p></div>
+              <span class="ai-endpoint-label">FastAPI</span>
+            </div>
+            <label class="settings-toggle" for="ai-service-consent">
+              <input id="ai-service-consent" type="checkbox" />
+              <span><strong>按次使用 AI 服务</strong><small>发送当次聊天或明确选中的材料；服务端不持久化请求正文</small></span>
+            </label>
+            <label class="settings-toggle" for="ai-profile-consent">
+              <input id="ai-profile-consent" type="checkbox" disabled />
+              <span><strong>持续更新本机画像</strong><small>在关键节点后台合并更新；只在本机保存去除证据原文的结构化结果</small></span>
+            </label>
+            <p class="profile-sync-status" id="settings-ai-status" role="status">尚未启用持续画像</p>
+            <article class="settings-profile-preview" id="settings-profile-preview" hidden>
+              <p>当前可修正画像</p>
+              <h3 id="settings-profile-headline"></h3>
+              <div id="settings-profile-summary"></div>
+              <small id="settings-profile-time"></small>
+            </article>
+            <button class="secondary-button full-width" id="settings-clear-profile" type="button" disabled>删除本机结构化画像</button>
+          </section>
           <section class="settings-card">
             <h2>本地与隐私</h2>
             <dl>
               <div><dt>闪念便贴</dt><dd>仅在本次页面中使用，不持久保存</dd></div>
               <div><dt>章节选择</dt><dd>仅用于本次对话开场与建议，离开后清除</dd></div>
               <div><dt>潮笺卡槽</dt><dd>点击「收进卡槽」后，只保存内置卡片编号与收藏时间</dd></div>
-              <div><dt>陪伴对话</dt><dd>当前原型仅在页面内存运行；正式接入前需明确服务端保存期限</dd></div>
+              <div><dt>陪伴对话</dt><dd>仅在本次页面内存保留；启用 AI 时按次发送，后端不建立会话存储</dd></div>
+              <div><dt>结构化画像</dt><dd>仅在单独授权后保存在本机；证据观察原文会在写入前移除</dd></div>
               <div><dt>未来回响</dt><dd>只有主动勾选后保存在这台设备</dd></div>
             </dl>
             <div class="settings-actions">
@@ -484,7 +523,7 @@
           </section>
           <section class="settings-card subtle-card">
             <h2>原型版本</h2>
-            <p>V0.4 · 新增今日潮汐日报与情绪陪伴对话。当前演示不连接后端；正式版本需单独获得聊天与个性化数据授权。</p>
+            <p>V0.5 · 已接入 FastAPI 多模态画像与支持性 AI 对话。未授权或网络异常时保留本地降级流程。</p>
           </section>
         </section>
 
@@ -495,6 +534,28 @@
           <button type="button" data-nav-target="echoes-screen"><span aria-hidden="true">⌁</span><strong>回响</strong></button>
           <button type="button" data-nav-target="settings-screen"><span aria-hidden="true">○</span><strong>我的</strong></button>
         </nav>
+
+        <div class="modal-backdrop" id="ai-consent-modal" hidden>
+          <section class="safety-modal ai-consent-modal" role="dialog" aria-modal="true" aria-labelledby="ai-consent-title">
+            <span class="modal-icon" aria-hidden="true">◐</span>
+            <p class="eyebrow">AI PROCESSING</p>
+            <h2 id="ai-consent-title">由你决定，哪些内容可以交给 AI。</h2>
+            <p id="ai-consent-reason">此功能需要按次调用 AI 服务。</p>
+            <ul>
+              <li>模型请求由 FastAPI 后端代发，App 中不包含模型密钥。</li>
+              <li>服务端不持久化本次原始文本、图片或对话。</li>
+              <li>这不是心理诊断、治疗或危机评估；你可以随时关闭。</li>
+            </ul>
+            <label class="ai-profile-consent-row" id="ai-profile-consent-row" for="consent-profile-personalization">
+              <input id="consent-profile-personalization" type="checkbox" />
+              <span><strong>另外开启持续画像</strong><small>关键节点异步更新，并在本机保存可删除的结构化画像；不默认勾选</small></span>
+            </label>
+            <div class="ai-consent-actions">
+              <button class="text-button" id="decline-ai-consent" type="button">继续使用本地功能</button>
+              <button class="primary-button" id="enable-ai-consent" type="button"><span>同意并启用 AI</span><span aria-hidden="true">→</span></button>
+            </div>
+          </section>
+        </div>
 
         <div class="modal-backdrop" id="safety-modal" hidden>
           <section class="safety-modal" role="dialog" aria-modal="true" aria-labelledby="safety-title">
@@ -537,7 +598,7 @@
       </section>
 
       <aside class="prototype-notes" aria-label="原型说明">
-        <p class="notes-kicker">PRODUCT PROTOTYPE · V0.4</p>
+        <p class="notes-kicker">PRODUCT PROTOTYPE · V0.5</p>
         <h2>从闪念开始，<br />沿同一条线索走到底。</h2>
         <p>心潮把今日潮汐、便贴、Reigns 式选择、四股潮向、潮笺卡槽、情绪陪伴对话、微行动和未来回响串成一段连续体验。日报可解释、对话可退出，结尾不显示得分或长期标签。</p>
         <ol>

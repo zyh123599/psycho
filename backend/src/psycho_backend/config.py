@@ -35,7 +35,9 @@ class Settings(BaseSettings):
 
     app_api_keys: str = ""
     cors_origins: str = (
-        "http://localhost:4173,http://localhost:4174,capacitor://localhost,https://localhost"
+        "http://localhost:4173,http://localhost:4174,http://localhost:8100,"
+        "http://127.0.0.1:4173,http://127.0.0.1:8100,"
+        "capacitor://localhost,https://localhost"
     )
 
     max_request_bytes: int = 25 * 1024 * 1024

@@ -1,4 +1,4 @@
-# 心潮心理画像 API v1
+# 心潮多模态画像与陪伴 API v1
 
 本文档面向 App/网页前端开发。服务端运行后，Swagger、ReDoc 和 OpenAPI JSON 分别位于
 `/docs`、`/redoc` 和 `/openapi.json`。
@@ -11,6 +11,7 @@
 - 普通响应：`application/json; charset=utf-8`
 - 日期时间：ISO 8601，服务端返回 UTC，例如 `2026-07-18T08:30:00Z`
 - 每个响应都有 `X-Request-ID`；前端报错时应连同它一起上报。
+- 两个模型端点都返回 `Cache-Control: no-store` 和 `Pragma: no-cache`，客户端也不应把正文交给普通分析日志。
 - `payload` 未知字段会被拒绝，前端应按 `schema_version` 做兼容。
 
 如果服务端配置了 `APP_API_KEYS`，所有分析请求还必须带：
@@ -31,6 +32,7 @@ API key，应由登录会话/JWT 或 API 网关完成用户级认证。
 | `GET` | `/api/v1/health/ready` | 否 | 否 | 本地模型配置就绪检查 |
 | `GET` | `/api/v1/capabilities` | 否 | 否 | 前端查询模态、格式和大小限制 |
 | `POST` | `/api/v1/profiles/analyze` | 按配置 | 是 | 生成一次性反思画像 |
+| `POST` | `/api/v1/companion/respond` | 按配置 | 正常请求是 | 生成一次无持久化的支持性回复、章节卡或反思报告 |
 
 `health/ready` 不访问中转站，因此不会产生模型费用；它只证明本地配置完整，不证明上游当前可用。
 
@@ -74,7 +76,7 @@ Content-Type: multipart/form-data; boundary=...
 
 不要手动设置带 boundary 的 `Content-Type`。浏览器或 Capacitor 的 `fetch` 会在发送 `FormData` 时自动生成。
 
-### 4.2 完整 payload 示例（对应当前 V0.2 flow）
+### 4.2 完整 payload 示例（对应当前 V0.5 flow）
 
 ```json
 {
@@ -188,7 +190,7 @@ Content-Type: multipart/form-data; boundary=...
 | `context` | string/null | 否 | 最多 1000 字符；解释信号语义，避免模型把内部值当量表 |
 | `observed_at` | ISO 8601/null | 否 | 信号产生时间 |
 
-V0.2 的 `certainty/rest/connection/agency` 是叙事节奏信号，不是心理测评分数，必须在 `context` 中明确这一点。
+前端内部的叙事节奏信号不是心理测评分数；若发送，必须在 `context` 中明确这一点。
 
 #### ImageContext
 
@@ -303,7 +305,118 @@ HTTP `200`：
 - `check_in_recommended`：材料值得前端温和确认用户当前是否安全。
 - `urgent_support_recommended`：前端应立即优先展示本地紧急/危机支持入口，不要等待画像动画结束。
 
-## 6. 错误响应
+## 6. 支持性对话、章节与报告
+
+```http
+POST /api/v1/companion/respond
+Content-Type: application/json
+```
+
+这是无状态、非流式 JSON 端点。FastAPI 和上游 SDK 均使用异步 I/O，但一次 HTTP 请求会等待该轮模型结果；
+前端可独立在后台调用画像端点，不应阻塞选卡、页面跳转或本地输入。服务端不创建会话，也不保存消息或画像上下文。
+
+### 6.1 请求示例
+
+```json
+{
+  "consent": {"ai_processing": true, "use_profile": true},
+  "mode": "chapter",
+  "locale": "zh-CN",
+  "client_request_id": "chat-20260718-001",
+  "messages": [
+    {"role": "assistant", "content": "关于今天确认的主题，此刻最想先说哪一部分？"},
+    {"role": "user", "content": "我明明很累，但总觉得停下来就会出错。"}
+  ],
+  "profile_context": {
+    "profile_id": "18db117e-25ca-4b26-88dc-8fbd8f3a846b",
+    "generated_at": "2026-07-18T08:30:00Z",
+    "headline": "在高标准与休息需要之间寻找停点",
+    "summary": "这是用户单独授权生成、可被新材料修正的暂时性总结。",
+    "communication_preferences": ["先被具体理解，再讨论一小步"],
+    "needs_and_preferences": ["一个清楚且可执行的结束边界"],
+    "gentle_actions": ["为当前任务写下最后一次检查的时间"],
+    "uncertainties": ["材料来自一次短会话，不能代表其他情境"]
+  }
+}
+```
+
+### 6.2 请求字段
+
+| 字段 | 类型 | 必填 | 限制/语义 |
+| --- | --- | --- | --- |
+| `consent.ai_processing` | boolean | 是 | 必须是字面量 `true`；表示用户同意本次消息及可选画像上下文发送给 AI 端点 |
+| `consent.use_profile` | boolean | 否 | 默认 `false`；提供 `profile_context` 时必须显式为 `true` |
+| `mode` | enum | 否 | `standalone`、`chapter`、`report`；默认 `standalone` |
+| `locale` | string | 否 | 默认 `zh-CN` |
+| `client_request_id` | string/null | 否 | 1–64 字符；只用于客户端去重，不发送模型 |
+| `messages` | array | 是 | 1–8 条，必须按 `user/assistant` 交替，最后一条必须为 `user` |
+| `messages[].content` | string | 是 | 1–4000 字符；当前 App 输入框限制为 400 字符 |
+| `profile_context` | object/null | 否 | 只有用户单独开启持续画像后才发送；是最小结构，不接受证据观察原文、安全事件或完整历史 |
+
+`profile_context` 的 `profile_id` 必须是 UUID 字符串，`generated_at` 必须是带时区的 ISO 8601；
+`headline` 最多 120 字符、`summary` 最多 1200 字符，各数组都有 4–6 项上限，单项最多 500 字符。
+未知字段、隐式数字转字符串、缺少同意、连续相同角色或超过八条消息都会返回 `422 request_validation_error`。
+
+### 6.3 mode 与响应
+
+- `standalone`：只返回 `reply`；`chapter` 和 `report` 为 `null`。
+- `chapter`：除 `reply` 外返回标题、可独立阅读的叙事和一个反思问题；`report` 为 `null`。
+- `report`：除 `reply` 外返回观察、资源、可能需要、低负担下一步和不确定性；`chapter` 为 `null`。
+
+HTTP `200` 示例：
+
+```json
+{
+  "schema_version": "1.0",
+  "request_id": "chat-20260718-001",
+  "client_request_id": "chat-20260718-001",
+  "generated_at": "2026-07-18T08:31:12Z",
+  "model": "gpt-5.6-sol",
+  "usage": {"input_tokens": 420, "output_tokens": 260, "total_tokens": 680},
+  "result": {
+    "mode": "chapter",
+    "reply": "听起来你一边想守住事情，一边也已经很累了。我们可以先找一个今天够用的停点。",
+    "chapter": {
+      "title": "给不确定留一个停点",
+      "narrative": "你注意到自己又开始检查，也注意到了疲惫。两者都可以被看见，而不必立刻分出对错。",
+      "reflection_question": "什么样的停点对今天来说已经够用？"
+    },
+    "report": null,
+    "suggested_prompts": ["我想先说说最累的部分", "帮我把下一步拆小"],
+    "safety_notice": {
+      "level": "not_indicated",
+      "evidence": [],
+      "message": "没有命中明确即时危险用语；这不是安全评估。",
+      "recommended_actions": []
+    }
+  },
+  "disclaimer": "此回复是基于本次主动提供内容的支持性反思，不是心理治疗、医疗诊断、危机评估或紧急服务；服务端不保存本次消息或画像上下文。"
+}
+```
+
+所有该端点响应都带 `Cache-Control: no-store` 和 `Pragma: no-cache`。上游调用使用 `store=false`。
+如果最近用户消息命中高精度明确自伤/他伤用语，服务端不会调用模型，而是本地返回
+`urgent_support_recommended`、`model=null`、`usage=null`。这只是确定性界面升级规则，不是临床风险评估；
+前端必须暂停普通对话，并显示经人工维护的当地紧急支持入口。
+
+### 6.4 浏览器调用示例
+
+```js
+const response = await fetch(`${apiBaseUrl}/api/v1/companion/respond`, {
+  method: "POST",
+  headers: {"Content-Type": "application/json", "X-Request-ID": clientRequestId},
+  body: JSON.stringify(request),
+  signal: abortController.signal,
+  cache: "no-store"
+})
+if (!response.ok) throw await response.json()
+const body = await response.json()
+renderTextOnly(body.result.reply)
+```
+
+不要把 `reply` 当作可信 HTML 注入。客户端离开页面时应取消请求；取消后不要自动重发原始文本。
+
+## 7. 错误响应
 
 统一格式：
 
@@ -329,7 +442,7 @@ HTTP `200`：
 | `401` | `unauthorized` | 清理无效会话/密钥，重新认证；不要自动重试 |
 | `413` | `request_too_large`、`image_too_large`、`text_too_large` | 提示用户减少图片或文本 |
 | `415` | `unsupported_image_type`、`animated_image_not_supported` | 要求换 JPEG/PNG/WebP 静态图 |
-| `422` | `invalid_payload`、`media_consent_required`、`analysis_refused` | 定位字段或重新获取明确同意；不要静默修改同意值 |
+| `422` | `invalid_payload`、`request_validation_error`、`media_consent_required`、`analysis_refused`、`response_refused` | 定位字段或重新获取明确同意；不要静默修改同意值 |
 | `429` | `model_rate_limited` | 读取界面状态后指数退避；避免重复点击 |
 | `502` | `model_unavailable`、`model_request_failed`、`invalid_model_output` | 告知暂时不可用，可由用户主动重试 |
 | `503` | `model_not_configured` | 开发/运维配置问题 |
@@ -340,7 +453,7 @@ HTTP `200`：
 显式“重试”按钮，并使用新的 `X-Request-ID`。生产环境若需要强幂等，应在网关/持久化任务层增加
 `Idempotency-Key`，当前单进程 API 不宣称幂等。
 
-## 7. 当前 V0.2 flow 到 API 的映射
+## 8. 当前 V0.5 flow 到 API 的映射
 
 | 前端字段 | API 字段 |
 | --- | --- |
@@ -348,14 +461,16 @@ HTTP `200`：
 | `flow.selectedTheme` | `texts[]`, `source=theme`，并可作为 `analysis_focus` |
 | `flow.choices[]` | `signals[]`, `source=card_choice` |
 | `flow.signals.certainty/rest/connection/agency` | `signals[]`, `source=aggregated_signal`；context 明确“不是量表分数” |
-| `flow.responseAnswers[]` | `texts[]`, `source=response`；跳过项不发送 |
+| 最近用户对话 | 画像更新时为 `texts[]`, `source=response`；对话回复时为 `messages[]` |
 | `flow.selectedAction` | `signals[]`, `source=selected_action` |
 | 语音转写 | `texts[]`, `source=voice_transcript` |
 | 用户选取图片 | multipart `images` + `image_contexts[]` |
 
-[`../examples/xinchao-api-client.js`](../examples/xinchao-api-client.js) 已实现上述转换和 `FormData` 请求。
+当前 Web/Capacitor 客户端实现在 [`../../prototype/api-client.js`](../../prototype/api-client.js)，画像异步合并队列与本机脱敏存储在
+[`../../prototype/profile-runtime.js`](../../prototype/profile-runtime.js)。旧示例适配器仍保留在
+[`../examples/xinchao-api-client.js`](../examples/xinchao-api-client.js)。
 
-## 8. 前端交互要求
+## 9. 前端交互要求
 
 1. 在上传前展示第三方 AI 处理说明，只有用户主动同意后才把三个必需同意字段设为 `true`。
 2. 图片选择界面应让用户确认其中没有未获同意的第三方敏感内容，并填写用途语境。
@@ -365,9 +480,9 @@ HTTP `200`：
 6. 不把画像保存为不可修改的永久人格标签，不基于结果做排序、定价、资格或其他高影响决策。
 7. 不记录完整响应到分析 SDK、崩溃平台或普通访问日志。
 
-## 9. CORS、网络与上线
+## 10. CORS、网络与上线
 
-- 本地浏览器原型默认允许 `http://localhost:4173` 和 `http://localhost:4174`。
+- 本地浏览器原型默认允许 `localhost` 的 4173/4174/8100，以及 `127.0.0.1` 的 4173/8100。
 - Capacitor 默认来源已包含 `capacitor://localhost`、`https://localhost`；实际发布 scheme/host 变化时同步修改
   `CORS_ORIGINS`。
 - Android 已声明 `INTERNET` 权限，但生产服务器和上游中转站都必须使用 HTTPS。
@@ -376,7 +491,7 @@ HTTP `200`：
   Redis/API 网关等共享基础设施中。
 - 上线前确认中转站的数据留存、训练使用、跨境传输和删除政策，并在 App 隐私说明中披露。
 
-## 10. 版本策略
+## 11. 版本策略
 
 - URL 主版本为 `/api/v1`。
 - 响应 `schema_version` 当前为 `1.0`。
