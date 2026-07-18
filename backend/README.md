@@ -1,7 +1,8 @@
-# 心潮多模态心理画像后端
+# 心潮多模态画像与陪伴后端
 
 独立的 FastAPI 服务，把 App 用户本人主动提供的文本、图片和结构化交互信号发送给
 OpenAI 兼容的多模态模型，并返回经过 Pydantic v2 严格校验的非诊断性反思画像。
+同时提供无会话存储的支持性对话端点，可按模式生成普通回复、章节卡或结构化反思报告。
 
 本服务当前不使用数据库，不持久化原始输入，也不会把上游模型 API key 发给 App。
 
@@ -30,6 +31,7 @@ uv run uvicorn psycho_backend.main:app --reload --host 127.0.0.1 --port 8000
 - ReDoc：<http://127.0.0.1:8000/redoc>
 - OpenAPI JSON：<http://127.0.0.1:8000/openapi.json>
 - 存活检查：<http://127.0.0.1:8000/api/v1/health/live>
+- 支持性对话：`POST http://127.0.0.1:8000/api/v1/companion/respond`
 
 完整的请求字段、响应结构、错误码和前端接入说明见 [`docs/API.md`](docs/API.md)。
 可直接复用的 V0.2 原型适配器见 [`examples/xinchao-api-client.js`](examples/xinchao-api-client.js)。
@@ -68,6 +70,7 @@ uv run uvicorn psycho_backend.main:app --host 127.0.0.1 --port 8000
 ## 安全与隐私边界
 
 - 请求必须明确确认用户本人同意画像生成和第三方 AI 处理；禁止用本接口分析未同意的第三方。
+- 对话请求必须单独确认本次 `ai_processing`；画像上下文是可选项，不能从服务处理授权推导出画像授权。
 - 图片不接受远程 URL，避免 SSRF；文件会验证实际格式、限制像素、缩放并重编码，原 EXIF 不会传给模型。
 - 请求体会按实际接收字节计数，未提供 `Content-Length` 的分块上传也受总大小限制。
 - 系统提示禁止从脸、身体、表情、穿着或人口特征推断人格、心理疾病或危险性。
@@ -88,6 +91,11 @@ backend/
 ├── examples/xinchao-api-client.js
 ├── src/psycho_backend/
 │   ├── api.py
+│   ├── companion_api.py
+│   ├── companion_llm.py
+│   ├── companion_prompts.py
+│   ├── companion_schemas.py
+│   ├── companion_service.py
 │   ├── config.py
 │   ├── image_processing.py
 │   ├── llm.py
