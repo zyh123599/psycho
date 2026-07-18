@@ -1,3 +1,16 @@
+import {
+  ApiError,
+  sendCompanionMessage
+} from "./api-client.js"
+import {
+  ProfileRuntime,
+  companionProfileContext,
+  deriveProfileActions,
+  deriveProfileEchoes,
+  deriveProfileReport,
+  deriveThemeCandidates
+} from "./profile-runtime.js"
+
 "use strict"
 
 const STORAGE_KEY = "xinchao.future-echoes.v1"
@@ -7,6 +20,7 @@ const QUICK_NOTE_LIMIT = 50
 const ANSWER_BOOK_STORAGE_KEY = "xinchao.answer-book.v1"
 const ONBOARDING_STORAGE_KEY = "xinchao.onboarding.v1"
 const QUICK_NOTE_IMAGE_MAX_DATA_LENGTH = 650000
+const REPORT_FEEDBACK_STORAGE_KEY = "xinchao.report-feedback.v1"
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const answerBookCards = [
@@ -344,6 +358,8 @@ const leftPreview = byId("left-preview")
 const rightPreview = byId("right-preview")
 const onboardingModal = byId("onboarding-modal")
 const voiceModal = byId("voice-modal")
+const safetyModal = byId("safety-modal")
+const aiConsentModal = byId("ai-consent-modal")
 const tideModal = byId("tide-modal")
 const cardDetailModal = byId("card-detail-modal")
 const topLevelScreens = new Set(["today-screen", "thoughts-screen", "chat-screen", "cards-screen", "echoes-screen", "settings-screen"])
@@ -353,6 +369,10 @@ function createFreshFlow() {
   return {
     notes: ["", ""],
     personalizeNotes: true,
+    images: [],
+    imagesProfiled: false,
+    imageRightsConfirmed: false,
+    imageError: "",
     themeCandidates: [],
     selectedTheme: "",
     themeSource: "",
@@ -368,7 +388,9 @@ function createFreshFlow() {
     chatMode: "standalone",
     chatMessages: [],
     chatBusy: false,
+    chatCrisis: false,
     chatSeed: "",
+    chatSuggestedPrompts: [],
     selectedAction: "",
     selectedEcho: "",
     echoSource: "",
@@ -395,7 +417,18 @@ let quickNoteVoiceStartedAt = 0
 let quickNoteRecordingTimer = null
 let voiceInputActive = false
 let ephemeralAnswerRecord = null
+let aiConsentReturnFocus = null
+let pendingAiConsentResolution = null
+let pendingAiConsentPromise = null
+let chatAbortController = null
+let latestProfileStatus = { state: "idle", message: "尚未启用持续画像" }
 const runtimeTimers = new Set()
+
+const profileRuntime = new ProfileRuntime({
+  snapshot: buildProfileSnapshot,
+  onProfile: handleProfileUpdated,
+  onStatus: handleProfileStatus
+})
 
 function schedule(callback, delay) {
   const timer = window.setTimeout(() => {
@@ -409,6 +442,392 @@ function schedule(callback, delay) {
 function cancelRuntimeTimers() {
   runtimeTimers.forEach((timer) => window.clearTimeout(timer))
   runtimeTimers.clear()
+}
+
+function activeProfileEnvelope() {
+  return profileRuntime.consent.profilePersonalization
+    ? profileRuntime.profileEnvelope
+    : null
+}
+
+function readReportFeedback() {
+  try {
+    const value = window.localStorage.getItem(REPORT_FEEDBACK_STORAGE_KEY)
+    return value === "helpful" || value === "not-me" ? value : null
+  } catch (_error) {
+    return null
+  }
+}
+
+function writeReportFeedback(value) {
+  try {
+    window.localStorage.setItem(REPORT_FEEDBACK_STORAGE_KEY, value)
+  } catch (_error) {
+    // 反馈仍在当前界面生效；本地存储不可用时不阻断体验。
+  }
+}
+
+function requestId(prefix) {
+  const random = Math.random().toString(36).slice(2, 9)
+  return `${prefix}-${Date.now().toString(36)}-${random}`
+}
+
+function profileFocusFor(reason) {
+  const focuses = {
+    notes: "根据用户刚刚主动提供的闪念和图片更新暂时性画像，并给出可供用户自行确认的主题线索。",
+    choices: "结合本章已确认主题和结构化选择信号，更新暂时性画像；不要把卡片选择解释为人格测评。",
+    chat: "结合用户主动允许用于画像的近期对话表达，更新沟通偏好、当下需要和低负担行动。",
+    action: "结合用户主动选择或跳过的微行动，更新可执行偏好；不要把跳过解释为抵抗或问题。",
+    feedback: "结合用户对日报表达方式的反馈调整不确定性和沟通偏好，不推断心理特征。",
+    complete: "为本次章节形成连续但可修正的暂时性反思画像。"
+  }
+  return focuses[reason] || focuses.complete
+}
+
+function buildProfileSnapshot({ reason, previousProfile, capabilities }) {
+  const texts = []
+  const signals = []
+
+  readQuickNotes().slice(0, 6).forEach((record, index) => {
+    const content = record.text.trim()
+    if (!content) return
+    texts.push({ source_id: `quick-note:${index + 1}`, source: "note", content })
+  })
+
+  if (flow.personalizeNotes) {
+    flow.notes.forEach((note, index) => {
+      const content = note.trim()
+      if (!content) return
+      texts.push({ source_id: `note:${index + 1}`, source: "note", content })
+    })
+  }
+
+  if (flow.selectedTheme) {
+    texts.push({ source_id: "theme:confirmed", source: "theme", content: flow.selectedTheme })
+  }
+
+  const userMessages = flow.chatCrisis
+    ? []
+    : flow.chatMessages.filter((message) => message.role === "user").slice(-6)
+  userMessages.forEach((message, index) => {
+    texts.push({
+      source_id: `response:${index + 1}`,
+      source: "response",
+      content: message.text
+    })
+  })
+
+  if (previousProfile && previousProfile.profile) {
+    const profile = previousProfile.profile
+    const continuity = JSON.stringify({
+      headline: profile.headline,
+      summary: profile.summary,
+      communication_preferences: profile.communication_preferences,
+      needs: (profile.needs_and_preferences || []).map((item) => item.title),
+      uncertainties: profile.uncertainties
+    }).slice(0, 5500)
+    texts.push({
+      source_id: "profile:previous",
+      source: "other",
+      content: `这是用户此前明确授权生成、且可被本次材料修正的结构化画像摘要：${continuity}`
+    })
+  }
+
+  flow.choices.forEach((choice, index) => {
+    if (!choice) return
+    signals.push({
+      source_id: `choice:${index + 1}`,
+      source: "card_choice",
+      name: `chapter_card_${index + 1}`,
+      value: choice.direction,
+      context: choice.label
+    })
+  })
+
+  if (flow.selectedAction) {
+    const action = currentActionOptions().find((item) => item.id === flow.selectedAction)
+    signals.push({
+      source_id: "action:selected",
+      source: "selected_action",
+      name: "selected_micro_action",
+      value: action ? action.label : "skipped_or_custom",
+      context: action ? action.rationale : "用户没有选择预设行动"
+    })
+  }
+
+  flow.keptTideQuotes.forEach((card, index) => {
+    signals.push({
+      source_id: `tidecard:${index + 1}`,
+      source: "app_interaction",
+      name: "kept_tide_card",
+      value: card.id
+    })
+  })
+
+  const feedback = readReportFeedback()
+  if (feedback) {
+    signals.push({
+      source_id: "report:feedback",
+      source: "app_interaction",
+      name: "daily_report_feedback",
+      value: feedback
+    })
+  }
+
+  const maxImages = Math.max(0, Number(capabilities.max_images) || 0)
+  const images = flow.personalizeNotes && !flow.imagesProfiled && flow.imageRightsConfirmed
+    ? flow.images.slice(0, maxImages)
+    : []
+  const image_contexts = images.map((_file, index) => ({
+    index,
+    source_id: `image:${index + 1}`,
+    description: "用户主动选择的个人记录图片；只读取其中明确文字、作品或用户给出的语境，不根据外貌推断心理属性。"
+  }))
+
+  if (texts.length === 0 && signals.length === 0 && images.length === 0) return null
+  return {
+    payload: {
+      consent: {
+        profile_generation: true,
+        ai_processing: true,
+        subject_is_requester: true,
+        media_rights_confirmed: images.length > 0
+      },
+      locale: "zh-CN",
+      client_request_id: requestId("profile"),
+      analysis_focus: profileFocusFor(reason),
+      texts,
+      signals,
+      image_contexts
+    },
+    images
+  }
+}
+
+function handleProfileStatus(status) {
+  latestProfileStatus = status
+  renderAiState()
+}
+
+function handleProfileUpdated(envelope, _reason, rawResponse) {
+  const safetyLevel = rawResponse?.profile?.safety_notice?.level
+  if (safetyLevel && safetyLevel !== "not_indicated") {
+    openSafety(null)
+    return
+  }
+  if (rawResponse && Array.isArray(rawResponse.modalities_used) && rawResponse.modalities_used.includes("image")) {
+    flow.imagesProfiled = true
+  }
+  applyProfileToVisibleExperience(envelope)
+}
+
+function applyProfileToVisibleExperience(envelope) {
+  if (!envelope) {
+    renderAiState()
+    renderTodayReport()
+    return
+  }
+  if (activeScreenId === "theme-screen" && !flow.selectedTheme) {
+    flow.themeCandidates = deriveThemeCandidates(envelope, generateLocalThemeCandidates())
+    renderThemeOptions()
+  }
+  if (activeScreenId === "action-screen") renderActionRecommendation()
+  if (activeScreenId === "echo-screen") renderEchoCandidates()
+  renderTodayReport()
+  renderAiState()
+}
+
+function queueProfileRefresh(reason) {
+  return profileRuntime.refresh(reason)
+}
+
+function renderAiState() {
+  const consent = profileRuntime.consent
+  const envelope = profileRuntime.profileEnvelope
+  const serviceToggle = byId("ai-service-consent")
+  const profileToggle = byId("ai-profile-consent")
+  if (serviceToggle) serviceToggle.checked = consent.serviceProcessing
+  if (profileToggle) {
+    profileToggle.checked = consent.profilePersonalization
+    profileToggle.disabled = !consent.serviceProcessing
+  }
+
+  const statusNodes = [byId("settings-ai-status"), byId("notes-ai-status")].filter(Boolean)
+  statusNodes.forEach((node) => {
+    node.textContent = latestProfileStatus.message
+    node.dataset.state = latestProfileStatus.state
+  })
+
+  const preview = byId("settings-profile-preview")
+  if (preview) {
+    preview.hidden = !envelope
+    if (envelope) {
+      byId("settings-profile-headline").textContent = envelope.profile.headline
+      byId("settings-profile-summary").textContent = envelope.profile.summary
+      byId("settings-profile-time").textContent = `最近更新：${new Intl.DateTimeFormat("zh-CN", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(new Date(envelope.generated_at))}`
+    }
+  }
+  const clearButton = byId("settings-clear-profile")
+  if (clearButton) clearButton.disabled = !envelope
+
+  const privacyLine = byId("today-privacy-line")
+  if (privacyLine) {
+    privacyLine.lastChild.textContent = consent.serviceProcessing
+      ? " AI 内容按次发送处理；原始聊天不持久保存 · 随时可以关闭"
+      : " AI 尚未启用；当前使用本地内容 · 随时可以停下"
+  }
+}
+
+function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能" } = {}) {
+  const consent = profileRuntime.consent
+  if (consent.serviceProcessing && (!profileRequested || consent.profilePersonalization)) {
+    return Promise.resolve(consent)
+  }
+  if (pendingAiConsentPromise) return pendingAiConsentPromise
+
+  aiConsentReturnFocus = document.activeElement
+  byId("ai-consent-reason").textContent = reason
+  const profileCheckbox = byId("consent-profile-personalization")
+  profileCheckbox.checked = consent.profilePersonalization
+  byId("ai-profile-consent-row").classList.toggle("is-requested", profileRequested)
+  aiConsentModal.hidden = false
+  window.requestAnimationFrame(() => byId("enable-ai-consent").focus())
+
+  pendingAiConsentPromise = new Promise((resolve) => {
+    pendingAiConsentResolution = resolve
+  })
+  return pendingAiConsentPromise
+}
+
+function closeAiConsent({ accepted }) {
+  if (aiConsentModal.hidden) return
+  const requestedProfile = byId("consent-profile-personalization").checked
+  if (accepted) {
+    profileRuntime.setConsent({
+      serviceProcessing: true,
+      profilePersonalization: requestedProfile
+    })
+  } else {
+    profileRuntime.setConsent({ prompted: true })
+  }
+  aiConsentModal.hidden = true
+  renderAiState()
+  const result = profileRuntime.consent
+  if (pendingAiConsentResolution) pendingAiConsentResolution(result)
+  pendingAiConsentResolution = null
+  pendingAiConsentPromise = null
+  const returnScreen = aiConsentReturnFocus && aiConsentReturnFocus.closest(".screen")
+  if (aiConsentReturnFocus && aiConsentReturnFocus.isConnected && !returnScreen?.hidden) {
+    aiConsentReturnFocus.focus({ preventScroll: true })
+  } else {
+    focusScreenHeading(byId(activeScreenId))
+  }
+  aiConsentReturnFocus = null
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function addNoteImages(fileList) {
+  const capabilities = profileRuntime.capabilities
+  const accepted = new Set(capabilities.accepted_image_types)
+  const maxImages = Number(capabilities.max_images) || 4
+  const maxBytes = Number(capabilities.max_image_bytes) || 8 * 1024 * 1024
+  const next = [...flow.images]
+  const errors = []
+
+  Array.from(fileList).forEach((file) => {
+    if (!accepted.has(file.type)) {
+      errors.push(`${file.name} 格式不支持`)
+      return
+    }
+    if (file.size > maxBytes) {
+      errors.push(`${file.name} 超过 ${formatBytes(maxBytes)}`)
+      return
+    }
+    if (next.length >= maxImages) {
+      errors.push(`最多选择 ${maxImages} 张图片`)
+      return
+    }
+    const duplicate = next.some((item) => (
+      item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+    ))
+    if (!duplicate) next.push(file)
+  })
+
+  flow.images = next
+  flow.imagesProfiled = false
+  flow.imageError = errors[0] || ""
+  if (flow.images.length === 0) flow.imageRightsConfirmed = false
+  renderNoteImages()
+}
+
+function renderNoteImages() {
+  const list = byId("note-image-list")
+  if (!list) return
+  list.replaceChildren()
+  flow.images.forEach((file, index) => {
+    const item = document.createElement("div")
+    item.className = "note-image-item"
+    const copy = document.createElement("span")
+    const name = document.createElement("strong")
+    name.textContent = file.name
+    const size = document.createElement("small")
+    size.textContent = formatBytes(file.size)
+    copy.append(name, size)
+    const remove = document.createElement("button")
+    remove.type = "button"
+    remove.textContent = "×"
+    remove.setAttribute("aria-label", `移除图片 ${file.name}`)
+    remove.addEventListener("click", () => {
+      flow.images.splice(index, 1)
+      flow.imagesProfiled = false
+      if (flow.images.length === 0) flow.imageRightsConfirmed = false
+      renderNoteImages()
+    })
+    item.append(copy, remove)
+    list.append(item)
+  })
+
+  const rightsRow = byId("image-rights-row")
+  rightsRow.hidden = flow.images.length === 0
+  byId("images-rights-confirmed").checked = flow.imageRightsConfirmed
+  const status = byId("note-image-status")
+  if (flow.imageError) {
+    status.textContent = flow.imageError
+    status.dataset.state = "error"
+  } else if (flow.images.length > 0) {
+    status.textContent = `已选择 ${flow.images.length} 张；仅在你开启持续画像并确认处理权利后发送一次`
+    status.dataset.state = "ready"
+  } else {
+    status.textContent = `可选，最多 ${profileRuntime.capabilities.max_images} 张；图片不会写入本地存储`
+    status.dataset.state = "idle"
+  }
+}
+
+function renderEchoCandidates() {
+  const candidates = buildEchoCandidates()
+  document.querySelectorAll("[data-echo-index]").forEach((button) => {
+    const index = Number(button.dataset.echoIndex)
+    button.querySelector("strong").textContent = candidates[index] || "今天先不留下结论。"
+  })
+  updateEchoSelection()
+}
+
+function initializeAiIntegration() {
+  renderAiState()
+  renderNoteImages()
+  profileRuntime.initialize().then(() => {
+    renderNoteImages()
+    renderAiState()
+  })
 }
 
 function focusScreenHeading(screen) {
@@ -459,6 +878,10 @@ function showScreen(screenOrId, options = {}) {
   const target = typeof screenOrId === "string" ? byId(screenOrId) : screenOrId
   if (!target) return
   if (activeScreenId === "chat-screen" && target.id !== "chat-screen") {
+    if (chatAbortController) {
+      chatAbortController.abort()
+      chatAbortController = null
+    }
     flow.chatBusy = false
     setVoiceInputState(false, { transcribe: false })
     if (flow.chatMode === "standalone") {
@@ -506,6 +929,7 @@ function startFlow(seedNote = "") {
   byId("custom-echo").value = ""
   byId("save-echo").checked = false
   renderNotes(seedNote.trim() ? 1 : -1)
+  renderNoteImages()
   showScreen("notes-screen")
 }
 
@@ -573,7 +997,7 @@ function renderNotes(focusIndex = -1) {
   }
 }
 
-function generateThemeCandidates() {
+function generateLocalThemeCandidates() {
   if (!flow.personalizeNotes) return [...genericThemes]
 
   const source = flow.notes.map((note) => note.trim().toLowerCase()).join(" ")
@@ -592,6 +1016,12 @@ function generateThemeCandidates() {
     if (!candidates.includes(theme)) candidates.push(theme)
   })
   return candidates.slice(0, 3)
+}
+
+function generateThemeCandidates() {
+  const localCandidates = generateLocalThemeCandidates()
+  if (!flow.personalizeNotes) return localCandidates
+  return deriveThemeCandidates(activeProfileEnvelope(), localCandidates)
 }
 
 function updateThemeControls() {
@@ -778,6 +1208,16 @@ function formatDailyDate() {
 }
 
 function buildDailyReport() {
+  const date = formatDailyDate()
+  const profileReport = deriveProfileReport(activeProfileEnvelope(), date)
+  if (profileReport) {
+    const fallbackSuggestions = dailyReportVariants.generic.suggestions
+    profileReport.suggestions = [...profileReport.suggestions, ...fallbackSuggestions]
+      .filter((item, index, items) => items.findIndex((candidate) => candidate[1] === item[1]) === index)
+      .slice(0, 3)
+    return profileReport
+  }
+
   const windowStart = Date.now() - 30 * DAY_MS
   const records = readTideCardRecords().filter((record) => record.collectedAt >= windowStart)
   const quickNotes = readQuickNotes().filter((record) => record.createdAt >= windowStart)
@@ -839,7 +1279,7 @@ function buildDailyReport() {
     personalized: dominant !== "generic",
     mode: dominant === "generic" ? "基础日报" : `根据近期${signalSources.join("与")}`,
     signalSources,
-    date: formatDailyDate()
+    date
   }
 }
 
@@ -887,9 +1327,11 @@ function renderDailyReport() {
     suggestions.append(article)
   })
 
-  byId("report-source-copy").textContent = report.personalized
-    ? `这份日报根据近 30 天的${report.signalSources.join("与")}生成，不读取聊天原文，也不展示隐藏分数。当前相对突出的可解释信号是「${tideMeta[report.dominant].label}」。`
-    : "目前还没有足够的可解释信号，所以显示通用基础版。留下闪念或主动收藏潮笺后，日报会逐渐贴近近期需要。"
+  byId("report-source-copy").textContent = report.profileDriven
+    ? "这份日报由你明确开启的本机结构化画像生成。画像可被新输入修正；原始图片和聊天不会写入画像存储，也不会显示心理分数。可在「我的」中关闭或删除。"
+    : (report.personalized
+      ? `这份日报根据近 30 天的${report.signalSources.join("与")}生成，不展示隐藏分数。当前相对突出的可解释信号是「${tideMeta[report.dominant].label}」。`
+      : "目前还没有足够的可解释信号，所以显示通用基础版。留下闪念或主动收藏潮笺后，日报会逐渐贴近近期需要。")
 }
 
 function recomputeTides(stirredKeys = []) {
@@ -1057,6 +1499,10 @@ function chooseCard(direction) {
   }
   recomputeSignals()
   const newlyUnlocked = recomputeTides(Object.keys(tides))
+  const answered = flow.choices.filter(Boolean).length
+  if (answered === 3 || answered === cards.length) {
+    void queueProfileRefresh("choices")
+  }
 
   if (direction === "left") storyCard.classList.add("exit-left")
   if (direction === "right") storyCard.classList.add("exit-right")
@@ -1137,7 +1583,11 @@ function renderChat() {
     const paragraph = document.createElement("p")
     paragraph.textContent = message.text
     const meta = document.createElement("small")
-    meta.textContent = message.role === "user" ? "你" : "潮伴 · 本地演示"
+    meta.textContent = message.role === "user"
+      ? "你"
+      : (message.source === "ai"
+        ? "潮伴 · AI"
+        : (message.source === "fallback" ? "潮伴 · 本地降级" : "潮伴"))
     article.append(paragraph, meta)
     log.append(article)
   })
@@ -1150,17 +1600,40 @@ function renderChat() {
     log.append(typing)
   }
 
+  byId("chat-crisis-panel").hidden = !flow.chatCrisis
+  byId("chat-quick-prompts").hidden = flow.chatCrisis
+  const promptButtons = Array.from(document.querySelectorAll("[data-chat-prompt]"))
+  if (flow.chatSuggestedPrompts.length > 0) {
+    promptButtons.forEach((button, index) => {
+      const prompt = flow.chatSuggestedPrompts[index]
+      if (!prompt) return
+      button.dataset.chatPrompt = prompt
+      button.textContent = prompt
+    })
+  }
   const input = byId("chat-input")
-  input.placeholder = "此刻最想说的是……"
-  byId("send-chat").disabled = flow.chatBusy || input.value.trim().length === 0
-  byId("voice-input").disabled = flow.chatBusy
-  byId("chat-status").textContent = voiceInputActive
-    ? "语音输入演示中 · 再点一次结束并生成示例文字"
-    : (flow.chatBusy ? "潮伴正在组织一句回应……" : "文字与语音目前都是前端交互演示")
+  input.disabled = flow.chatCrisis
+  input.placeholder = flow.chatCrisis ? "普通陪聊已暂停" : "此刻最想说的是……"
+  byId("chat-form").classList.toggle("is-paused", flow.chatCrisis)
+  byId("send-chat").disabled = flow.chatCrisis || flow.chatBusy || input.value.trim().length === 0
+  byId("voice-input").disabled = flow.chatCrisis || flow.chatBusy
+  byId("chat-status").textContent = flow.chatCrisis
+    ? "普通陪聊已暂停，请优先使用上方的即时支持路径"
+    : (voiceInputActive
+      ? "语音输入演示中 · 再点一次结束并生成示例文字"
+      : (flow.chatBusy
+        ? "潮伴正在组织一句回应……"
+        : (profileRuntime.consent.serviceProcessing
+          ? "消息按次发送给 AI；后端不建立会话存储"
+          : "AI 尚未启用；回复会使用本地降级规则")))
 
   window.requestAnimationFrame(() => {
     log.scrollTop = log.scrollHeight
   })
+}
+
+function containsCrisisLanguage(text) {
+  return /(不想活|不想再活|活不下去|活着没意思|想死|想去死|自杀|自殘|自残|轻生|輕生|结束生命|結束生命|结束这一切|傷害自己|伤害自己|傷害別人|伤害别人|杀了自己|殺了自己|杀人|殺人|马上去死|立即危险|立即危險)/.test(text)
 }
 
 function demoChatReply(text) {
@@ -1183,29 +1656,115 @@ function demoChatReply(text) {
   return "我们可以先停在这里，不急着得出结论。如果愿意，带走一个很小的动作就够了。"
 }
 
-function sendChatMessage(rawText) {
+function companionMode() {
+  if (flow.chatMode === "flow") return "chapter"
+  if (flow.chatSeed === "report") return "report"
+  return "standalone"
+}
+
+function companionMessages() {
+  return flow.chatMessages
+    .filter((message) => !message.safety)
+    .slice(-8)
+    .map((message) => ({
+      role: message.role === "user" ? "user" : "assistant",
+      content: message.text
+    }))
+}
+
+async function sendChatMessage(rawText) {
   const text = rawText.trim()
   if (!text || flow.chatBusy) return
   setVoiceInputState(false, { transcribe: false })
   flow.chatMessages.push({ role: "user", text })
   byId("chat-input").value = ""
 
+  if (containsCrisisLanguage(text)) {
+    flow.chatCrisis = true
+    flow.chatMessages.push({
+      role: "bot",
+      safety: true,
+      text: "谢谢你告诉我。现在先不继续普通对话：请确认你是否处于立即危险，并尽快联系所在地紧急服务、危机支持资源，或一位能马上来到你身边的人。"
+    })
+    renderChat()
+    return
+  }
   flow.chatBusy = true
   renderChat()
-  schedule(() => {
+
+  const consent = await requestAiConsent({
+    reason: "陪伴对话需要把你本次发送的消息交给 AI 生成回应。"
+  })
+  if (activeScreenId !== "chat-screen") {
     flow.chatBusy = false
-    flow.chatMessages.push({ role: "bot", text: demoChatReply(text) })
-    renderChat()
-    byId("chat-input").focus({ preventScroll: true })
-  }, 650)
+    return
+  }
+
+  try {
+    if (!consent.serviceProcessing) {
+      flow.chatMessages.push({ role: "bot", source: "fallback", text: demoChatReply(text) })
+    } else {
+      chatAbortController = new AbortController()
+      const profileContext = consent.profilePersonalization
+        ? companionProfileContext(activeProfileEnvelope())
+        : null
+      const request = {
+        consent: { ai_processing: true, use_profile: profileContext !== null },
+        mode: companionMode(),
+        locale: "zh-CN",
+        client_request_id: requestId("chat"),
+        messages: companionMessages(),
+        profile_context: profileContext
+      }
+      const response = await sendCompanionMessage(request, {
+        signal: chatAbortController.signal
+      })
+      const result = response.result
+      flow.chatSuggestedPrompts = Array.isArray(result.suggested_prompts)
+        ? result.suggested_prompts
+        : []
+      const urgent = result.safety_notice?.level === "urgent_support_recommended"
+      flow.chatMessages.push({
+        role: "bot",
+        source: "ai",
+        safety: urgent,
+        text: result.reply
+      })
+      if (urgent) flow.chatCrisis = true
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "client_aborted")) {
+      const prefix = error instanceof ApiError
+        ? `AI 服务暂时不可用（${error.code}）。`
+        : "AI 服务暂时不可用。"
+      flow.chatMessages.push({
+        role: "bot",
+        source: "fallback",
+        text: `${prefix}以下是本地降级回应：${demoChatReply(text)}`
+      })
+    }
+  } finally {
+    chatAbortController = null
+    flow.chatBusy = false
+    if (activeScreenId === "chat-screen") {
+      renderChat()
+      byId("chat-input").focus({ preventScroll: true })
+    }
+    const userTurns = flow.chatMessages.filter((message) => message.role === "user").length
+    if (!flow.chatCrisis && (userTurns === 1 || userTurns % 2 === 0)) {
+      void queueProfileRefresh("chat")
+    }
+  }
 }
 
 function beginChat() {
   flow.chatMode = "flow"
   flow.chatMessages = []
   flow.chatBusy = false
+  flow.chatCrisis = false
   flow.chatSeed = ""
   setVoiceInputState(false, { transcribe: false })
+  flow.chatSuggestedPrompts = []
   showScreen("chat-screen")
 }
 
@@ -1215,7 +1774,9 @@ function openStandaloneChat(options = {}) {
   if (shouldReset) {
     flow.chatMessages = []
     flow.chatBusy = false
+    flow.chatCrisis = false
     flow.chatSeed = options.fromReport ? "report" : ""
+    flow.chatSuggestedPrompts = []
   }
   setVoiceInputState(false, { transcribe: false })
   showScreen("chat-screen")
@@ -1236,7 +1797,7 @@ function setVoiceInputState(active, options = {}) {
   byId("send-chat").disabled = flow.chatBusy || input.value.trim().length === 0
   byId("chat-status").textContent = active
     ? "语音输入演示中 · 再点一次结束并生成示例文字"
-    : (options.transcribe === false ? "文字与语音目前都是前端交互演示" : "已生成一段示例文字，你可以继续编辑")
+    : (options.transcribe === false ? "语音目前为前端交互演示" : "已生成一段示例文字，你可以继续编辑")
 }
 
 function toggleVoiceInputDemo() {
@@ -1251,14 +1812,44 @@ function endChat() {
   }
 }
 
+function currentActionOptions() {
+  const generated = deriveProfileActions(activeProfileEnvelope())
+  const fallback = Object.entries(actionCopy).map(([id, item]) => ({
+    id,
+    label: item.label,
+    title: item.label,
+    rationale: item.rationale
+  }))
+  return [...generated, ...fallback]
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.label === item.label) === index)
+    .slice(0, 3)
+}
+
 function renderActionRecommendation() {
-  const recommendation = signalRecommendation[dominantSignal()] || signalRecommendation.agency
-  document.querySelectorAll("[data-action-id]").forEach((button) => {
+  const options = currentActionOptions()
+  const generated = options[0] && options[0].id.startsWith("profile-action-")
+  const localRecommendation = signalRecommendation[dominantSignal()] || signalRecommendation.agency
+  const recommendation = generated
+    ? {
+      action: options[0].id,
+      copy: `结合最近一次授权画像，先推荐「${options[0].title}」。它仍只是可跳过的低负担建议。`
+    }
+    : localRecommendation
+
+  document.querySelectorAll(".action-option").forEach((button, index) => {
+    const option = options[index]
+    if (!option) return
+    button.dataset.actionId = option.id
+    button.querySelector("strong").textContent = option.label
+    button.querySelector("small").textContent = option.rationale
     const selected = button.dataset.actionId === flow.selectedAction
     button.setAttribute("aria-pressed", String(selected))
     button.classList.toggle("is-selected", selected)
     button.classList.toggle("is-recommended", button.dataset.actionId === recommendation.action)
   })
+  if (flow.selectedAction && !options.some((item) => item.id === flow.selectedAction)) {
+    flow.selectedAction = ""
+  }
   byId("action-rationale").textContent = recommendation.copy
   byId("action-continue").disabled = !flow.selectedAction
 }
@@ -1270,17 +1861,20 @@ function showActionScreen() {
 }
 
 function buildEchoCandidates() {
-  const action = actionCopy[flow.selectedAction]
+  const action = currentActionOptions().find((item) => item.id === flow.selectedAction)
   const tideQuotes = flow.keptTideQuotes
     .slice()
     .reverse()
     .map((quote) => quote.text)
+  const profileEchoes = deriveProfileEchoes(activeProfileEnvelope())
   const defaults = [
     "今天的我已经停下来，认真听了一会儿自己。",
     action ? `提醒自己：${action.label}。` : "不行动也可以是今天诚实的选择。",
     "答案可以慢一点，我不必现在把一切想清楚。"
   ]
-  return Array.from(new Set([...tideQuotes, ...defaults])).slice(0, 3)
+  return Array.from(new Set([...tideQuotes, ...profileEchoes, ...defaults]))
+    .map((item) => item.slice(0, 120))
+    .slice(0, 3)
 }
 
 function updateEchoSelection() {
@@ -1325,13 +1919,8 @@ function showEchoScreen() {
   byId("custom-echo").value = ""
   byId("save-echo").checked = false
 
-  const candidates = buildEchoCandidates()
-  document.querySelectorAll("[data-echo-index]").forEach((button) => {
-    const index = Number(button.dataset.echoIndex)
-    button.querySelector("strong").textContent = candidates[index]
-  })
   showScreen("echo-screen")
-  updateEchoSelection()
+  renderEchoCandidates()
 }
 
 function todayStorageKey(date = new Date()) {
@@ -1867,8 +2456,9 @@ function finishFlow() {
   }
 
   byId("complete-theme").textContent = `“${flow.selectedTheme}”`
-  byId("complete-action").textContent = flow.selectedAction
-    ? actionCopy[flow.selectedAction].label
+  const selectedAction = currentActionOptions().find((item) => item.id === flow.selectedAction)
+  byId("complete-action").textContent = selectedAction
+    ? selectedAction.label
     : "今天没有带走行动（这也可以）"
   if (flow.savedEchoThisRun) {
     byId("complete-echo").textContent = `${delayLabel(flow.echoDelay)}回到这里`
@@ -1880,6 +2470,7 @@ function finishFlow() {
 
   renderCompleteTideCards()
   showScreen("complete-screen")
+  void queueProfileRefresh("complete")
 }
 
 function formatTideCardDate(timestamp) {
@@ -2151,6 +2742,7 @@ function updateSettingsStorageState() {
   byId("my-card-slot-count").textContent = cardCount === 0 ? "还没有收下潮笺" : `已经收下 ${cardCount} 张潮笺`
   byId("my-echo-count").textContent = count === 0 ? "还没有留给未来的话" : `已经保存 ${count} 条回响`
   renderInitialImpression()
+  renderAiState()
 }
 
 function openOnboarding(event) {
@@ -2227,7 +2819,11 @@ function trapModalFocus(event) {
     ? voiceModal
     : (!onboardingModal.hidden
       ? onboardingModal
-      : (!cardDetailModal.hidden ? cardDetailModal : (!tideModal.hidden ? tideModal : null)))
+      : (!cardDetailModal.hidden
+        ? cardDetailModal
+        : (!tideModal.hidden
+          ? tideModal
+          : (!aiConsentModal.hidden ? aiConsentModal : (!safetyModal.hidden ? safetyModal : null)))))
   if (!activeModal) return
   const focusable = Array.from(activeModal.querySelectorAll(
     "button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type='hidden']), a[href]"
@@ -2283,6 +2879,8 @@ document.querySelectorAll("[data-report-feedback]").forEach((button) => {
     byId("report-feedback-status").textContent = button.dataset.reportFeedback === "helpful"
       ? "收到。之后会继续保持这种低负担、可解释的表达。"
       : "收到。这不会被当成你的问题，之后会降低这类推断的权重。"
+    writeReportFeedback(button.dataset.reportFeedback)
+    void queueProfileRefresh("feedback")
   })
 })
 
@@ -2326,6 +2924,7 @@ byId("quick-note-form").addEventListener("submit", (event) => {
   renderQuickNotes()
   updateSettingsStorageState()
   resetQuickNoteComposer()
+  if (profileRuntime.consent.profilePersonalization) void queueProfileRefresh("notes")
 })
 
 byId("notes-back").addEventListener("click", () => showScreen("today-screen"))
@@ -2345,7 +2944,15 @@ byId("use-note-example").addEventListener("click", () => {
 byId("notes-personalize").addEventListener("change", (event) => {
   flow.personalizeNotes = event.currentTarget.checked
 })
-byId("notes-continue").addEventListener("click", () => {
+byId("note-images").addEventListener("change", (event) => {
+  addNoteImages(event.currentTarget.files || [])
+  event.currentTarget.value = ""
+})
+byId("images-rights-confirmed").addEventListener("change", (event) => {
+  flow.imageRightsConfirmed = event.currentTarget.checked
+  renderNoteImages()
+})
+byId("notes-continue").addEventListener("click", async () => {
   if (countFilledNotes() < 2) return
   flow.themeCandidates = generateThemeCandidates()
   flow.selectedTheme = ""
@@ -2353,6 +2960,13 @@ byId("notes-continue").addEventListener("click", () => {
   byId("custom-theme").value = ""
   renderThemeOptions()
   showScreen("theme-screen")
+
+  if (!flow.personalizeNotes) return
+  const consent = await requestAiConsent({
+    profileRequested: true,
+    reason: "持续画像可以在后台把这些闪念转成可修正的主题、行动和日报。"
+  })
+  if (consent.profilePersonalization) void queueProfileRefresh("notes")
 })
 
 byId("theme-back").addEventListener("click", () => showScreen("notes-screen"))
@@ -2380,6 +2994,7 @@ byId("choose-custom-theme").addEventListener("click", () => {
 })
 byId("theme-continue").addEventListener("click", () => {
   if (!flow.selectedTheme) return
+  void queueProfileRefresh("notes")
   showOverview()
 })
 
@@ -2460,6 +3075,23 @@ byId("chat-form").addEventListener("submit", (event) => {
 document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
   button.addEventListener("click", () => sendChatMessage(button.dataset.chatPrompt))
 })
+byId("chat-crisis-help").addEventListener("click", () => {
+  cancelRuntimeTimers()
+  if (chatAbortController) {
+    chatAbortController.abort()
+    chatAbortController = null
+  }
+  flow.chatBusy = false
+  flow.chatCrisis = true
+  if (!flow.chatMessages.some((message) => message.safety)) {
+    flow.chatMessages.push({
+      role: "bot",
+      safety: true,
+      text: "我们先把安全放在最前面。请联系所在地紧急服务、危机支持资源，或一位能马上来到你身边的人。"
+    })
+  }
+  renderChat()
+})
 byId("end-chat").addEventListener("click", endChat)
 
 document.querySelectorAll("[data-action-id]").forEach((button) => {
@@ -2477,10 +3109,12 @@ byId("action-back").addEventListener("click", () => {
 })
 byId("skip-action").addEventListener("click", () => {
   flow.selectedAction = ""
+  void queueProfileRefresh("action")
   showEchoScreen()
 })
 byId("action-continue").addEventListener("click", () => {
   if (!flow.selectedAction) return
+  void queueProfileRefresh("action")
   showEchoScreen()
 })
 
@@ -2514,6 +3148,30 @@ byId("finish-flow").addEventListener("click", finishFlow)
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-tide-cards").addEventListener("click", clearAllTideCards)
+byId("enable-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: true }))
+byId("decline-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: false }))
+byId("ai-service-consent").addEventListener("change", (event) => {
+  profileRuntime.setConsent({
+    serviceProcessing: event.currentTarget.checked,
+    profilePersonalization: event.currentTarget.checked
+      ? profileRuntime.consent.profilePersonalization
+      : false
+  })
+  renderAiState()
+})
+byId("ai-profile-consent").addEventListener("change", (event) => {
+  profileRuntime.setConsent({
+    serviceProcessing: true,
+    profilePersonalization: event.currentTarget.checked
+  })
+  renderAiState()
+  if (event.currentTarget.checked) void queueProfileRefresh("complete")
+})
+byId("settings-clear-profile").addEventListener("click", () => {
+  profileRuntime.clearProfile()
+  renderAiState()
+  renderTodayReport()
+})
 
 byId("keep-tide-quote").addEventListener("click", () => closeTideQuote(true))
 byId("skip-tide-quote").addEventListener("click", () => closeTideQuote(false))
@@ -2577,10 +3235,21 @@ document.addEventListener("keydown", (event) => {
     closeTideQuote(false)
     return
   }
+  if (!aiConsentModal.hidden && event.key === "Escape") {
+    event.preventDefault()
+    closeAiConsent({ accepted: false })
+    return
+  }
+  if (!safetyModal.hidden && event.key === "Escape") {
+    event.preventDefault()
+    closeSafety()
+    return
+  }
   trapModalFocus(event)
 })
 
 renderNotes()
+initializeAiIntegration()
 updateDueEchoCard()
 updateSettingsStorageState()
 showScreen(activeScreenId, { focus: false })

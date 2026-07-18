@@ -1,7 +1,8 @@
 import json
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from openai import (
     APIConnectionError,
@@ -20,6 +21,7 @@ from psycho_backend.prompts import SYSTEM_PROMPT, build_user_prompt
 from psycho_backend.schemas import GeneratedProfile, ProfileAnalyzePayload, TokenUsage
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,39 +57,22 @@ class OpenAIProfileLLM:
     async def close(self) -> None:
         await self.client.close()
 
-    async def generate(
+    async def _call_with_error_mapping(
         self,
+        call: Awaitable[T],
         *,
-        payload: ProfileAnalyzePayload,
-        images: list[ProcessedImage],
-        explicit_safety_hint: bool,
         request_id: str,
-    ) -> LLMResult:
-        image_sources: list[dict[str, str | int]] = [
-            {
-                "index": index,
-                "source_id": image.source_id,
-                "user_context": image.context,
-                "normalized_size": f"{image.width}x{image.height}",
-            }
-            for index, image in enumerate(images)
-        ]
-        user_prompt = build_user_prompt(
-            payload,
-            image_sources=image_sources,
-            explicit_safety_hint=explicit_safety_hint,
-        )
+        task_label: str,
+    ) -> T:
+        """Await one upstream call and translate SDK errors into the public envelope."""
 
         try:
-            if self.settings.openai_api_mode == "responses":
-                raw, model, usage = await self._responses(user_prompt, images)
-            else:
-                raw, model, usage = await self._chat_completions(user_prompt, images)
+            return await call
         except APITimeoutError as exc:
             raise PublicError(
                 status_code=504,
                 code="model_timeout",
-                message="画像生成超时，请稍后重试",
+                message=f"{task_label}超时，请稍后重试",
             ) from exc
         except RateLimitError as exc:
             raise PublicError(
@@ -118,8 +103,41 @@ class OpenAIProfileLLM:
             raise PublicError(
                 status_code=502,
                 code="model_request_failed",
-                message="模型服务未能完成本次画像生成",
+                message=f"模型服务未能完成本次{task_label}",
             ) from exc
+
+    async def generate(
+        self,
+        *,
+        payload: ProfileAnalyzePayload,
+        images: list[ProcessedImage],
+        explicit_safety_hint: bool,
+        request_id: str,
+    ) -> LLMResult:
+        image_sources: list[dict[str, str | int]] = [
+            {
+                "index": index,
+                "source_id": image.source_id,
+                "user_context": image.context,
+                "normalized_size": f"{image.width}x{image.height}",
+            }
+            for index, image in enumerate(images)
+        ]
+        user_prompt = build_user_prompt(
+            payload,
+            image_sources=image_sources,
+            explicit_safety_hint=explicit_safety_hint,
+        )
+
+        if self.settings.openai_api_mode == "responses":
+            call = self._responses(user_prompt, images)
+        else:
+            call = self._chat_completions(user_prompt, images)
+        raw, model, usage = await self._call_with_error_mapping(
+            call,
+            request_id=request_id,
+            task_label="画像生成",
+        )
 
         profile = self._parse_profile(raw, request_id=request_id)
         return LLMResult(profile=profile, model=model or self.settings.openai_model, usage=usage)
