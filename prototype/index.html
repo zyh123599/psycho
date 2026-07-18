@@ -231,11 +231,10 @@
             <li><span>03</span><div><strong>带走一小步</strong><small>行动与未来回响</small></div></li>
           </ol>
 
-          <div class="boundary-note"><span aria-hidden="true">i</span><p>选择只用于调整本次对话开场和建议，不判断人格或心理状况。</p></div>
           <p class="narrative-status" id="narrative-status" role="status">当前使用内置叙事。</p>
 
           <div class="sticky-footer">
-            <button class="primary-button" id="overview-start" type="button">
+            <button class="primary-button centered-button" id="overview-start" type="button">
               <span>进入第一章</span><span aria-hidden="true">→</span>
             </button>
           </div>
@@ -297,7 +296,7 @@
             <button class="choice-button right" id="right-button" type="button"><span class="choice-copy"><strong id="right-button-label"></strong><small id="right-tide-hint"></small></span><span class="choice-arrow" aria-hidden="true">→</span></button>
             <button class="neutral-button" id="neutral-button" type="button">两个都不像</button>
           </div>
-          <p class="swipe-help" id="swipe-help">滑动、点击，或使用键盘 ← → ↓</p>
+          <p class="swipe-help sr-only" id="swipe-help">滑动、点击，或使用键盘 ← → ↓</p>
           <div class="result-toast" id="result-toast" role="status"></div>
         </section>
 
@@ -305,7 +304,7 @@
           <header class="flow-header">
             <button class="back-button" id="chat-back" type="button" aria-label="返回上一页">←</button>
             <span class="prototype-pill">情绪陪伴 · AI</span>
-            <button class="icon-button voice-mode-trigger" id="open-voice-mode" type="button" aria-label="打开实时语音转写">
+            <button class="icon-button voice-mode-trigger" id="voice-input" type="button" aria-label="开始实时语音转写到输入框" aria-pressed="false">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
           </header>
@@ -331,7 +330,7 @@
 
           <form class="chat-composer" id="chat-form">
             <label class="sr-only" for="chat-input">想对潮伴说的话</label>
-            <button class="voice-input-button" id="voice-input" type="button" aria-label="开始实时语音转写" aria-pressed="false">
+            <button class="voice-input-button" id="open-voice-mode" type="button" aria-label="打开实时语音陪伴">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
             <textarea id="chat-input" rows="1" maxlength="400" placeholder="此刻最想说的是……"></textarea>
@@ -520,7 +519,7 @@
             </div>
             <div class="quick-note-composer-meta">
               <span id="quick-note-count">0 / 200</span>
-              <span id="quick-note-status" role="status">文字、日期和表达类型保存在本机；原图与语音文件不保存</span>
+              <span id="quick-note-status" role="status"></span>
             </div>
           </form>
         </section>
@@ -594,12 +593,13 @@
                 <button id="memory-month-next" type="button" aria-label="查看下个月">›</button>
               </div>
             </div>
-            <p class="memory-archive-intro">闪念与未来回响会落在各自的日期里，慢慢连成一张只属于你的时间卡。</p>
+            <p class="memory-archive-intro">闪念、未来回响与收下的潮笺会落在各自的日期里，慢慢连成一张只属于你的时间卡。</p>
             <div class="memory-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
             <div class="memory-calendar" id="memory-calendar" role="grid" aria-label="本月时光记录"></div>
             <div class="memory-legend" aria-label="日期标记说明">
               <span><i class="is-thought"></i>闪念</span>
               <span><i class="is-echo"></i>未来回响</span>
+              <span><i class="is-card"></i>潮笺</span>
               <strong id="memory-month-total">还没有留下记录</strong>
             </div>
             <article class="memory-day-card" id="memory-day-card">
@@ -612,6 +612,7 @@
               <div class="memory-day-actions">
                 <button type="button" data-nav-target="thoughts-screen">写一条闪念</button>
                 <button type="button" data-nav-target="echoes-screen">打开未来回响</button>
+                <button type="button" data-nav-target="cards-screen">打开卡槽</button>
               </div>
             </article>
             <article class="memory-ai-panel" id="memory-ai-panel">
@@ -624,6 +625,18 @@
               <blockquote id="memory-ai-question" hidden></blockquote>
               <p class="memory-ai-status" id="memory-ai-status" role="status">当前显示本地日历，不会自动发送内容。</p>
             </article>
+          </section>
+          <section class="settings-card">
+            <h2>我的收藏</h2>
+            <div class="my-space-links">
+              <button type="button" data-nav-target="cards-screen"><span aria-hidden="true">▱</span><div><strong>潮笺卡槽</strong><small id="my-card-slot-count">看看满潮时收下的短句</small></div><i aria-hidden="true">→</i></button>
+              <button type="button" data-nav-target="echoes-screen"><span aria-hidden="true">⌁</span><div><strong>未来回响</strong><small id="my-echo-count">看看留给未来的话</small></div><i aria-hidden="true">→</i></button>
+            </div>
+          </section>
+          <section class="settings-card">
+            <h2>第一次来，不知道从哪里开始？</h2>
+            <p>用 30 秒看懂“今天、闪念、对话和回响”各自适合什么时候使用；情境卡可以左右滑动、点击，或用键盘 ← → ↓ 选择。</p>
+            <button class="ghost-button full-width" id="open-tutorial-from-settings" type="button">再看一次新手说明</button>
           </section>
           <section class="settings-card impression-card">
             <div class="impression-meta"><span>初印象</span><small>轻量画像 · 可随时修正</small></div>
@@ -644,13 +657,6 @@
             </button>
           </section>
           <section class="settings-card">
-            <h2>我的收藏</h2>
-            <div class="my-space-links">
-              <button type="button" data-nav-target="cards-screen"><span aria-hidden="true">▱</span><div><strong>潮笺卡槽</strong><small id="my-card-slot-count">看看满潮时收下的短句</small></div><i aria-hidden="true">→</i></button>
-              <button type="button" data-nav-target="echoes-screen"><span aria-hidden="true">⌁</span><div><strong>未来回响</strong><small id="my-echo-count">看看留给未来的话</small></div><i aria-hidden="true">→</i></button>
-            </div>
-          </section>
-          <section class="settings-card">
             <h2>你的内容与偏好</h2>
             <dl>
               <div><dt>随手闪念</dt><dd>文字、日期和表达类型保存在本机；图片与录音不落盘，图片需逐图授权，语音只保存用户确认提交的转写文字</dd></div>
@@ -668,14 +674,9 @@
               <button class="secondary-button" id="settings-clear-echoes" type="button">删除全部已保存回响</button>
             </div>
           </section>
-          <section class="settings-card">
-            <h2>第一次来，不知道从哪里开始？</h2>
-            <p>用 30 秒看懂“今天、闪念、对话和回响”各自适合什么时候使用。</p>
-            <button class="ghost-button full-width" id="open-tutorial-from-settings" type="button">再看一次新手说明</button>
-          </section>
           <section class="settings-card subtle-card">
-            <h2>原型版本</h2>
-            <p>V0.7 · 融合实时语音转写、多模态闪念、纯前端自定义 API、多模态文字画像与画像混合叙事。</p>
+            <h2>关于心潮</h2>
+            <p>心潮是一款用叙事与对话陪你梳理情绪的心理陪伴 App：写下闪念、走一段今日章节、和 AI 潮伴聊聊，把此刻的心情慢慢看清。你留下的内容都只保存在本机，随时可以带走或删除。</p>
           </section>
         </section>
 
@@ -851,6 +852,7 @@
 
         <div class="modal-backdrop" id="ai-consent-modal" hidden>
           <section class="safety-modal ai-consent-modal" role="dialog" aria-modal="true" aria-labelledby="ai-consent-title">
+            <button class="modal-back" id="ai-consent-back" type="button" aria-label="返回">←</button>
             <span class="modal-icon" aria-hidden="true">◐</span>
             <p class="eyebrow">AI PROCESSING</p>
             <h2 id="ai-consent-title">由你决定，哪些内容可以交给 AI。</h2>

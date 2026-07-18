@@ -993,7 +993,7 @@ function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能
   byId("ai-consent-reason").textContent = reason
   const configured = hasApiSettings()
   byId("ai-consent-config-warning").hidden = configured
-  byId("enable-ai-consent").disabled = !configured
+  byId("enable-ai-consent").disabled = false
   const profileCheckbox = byId("consent-profile-personalization")
   profileCheckbox.checked = consent.profilePersonalization
   byId("ai-profile-consent-row").classList.toggle("is-requested", profileRequested)
@@ -1030,6 +1030,12 @@ function closeAiConsent({ accepted }) {
     focusScreenHeading(byId(activeScreenId))
   }
   aiConsentReturnFocus = null
+}
+
+function goToApiSettings() {
+  showScreen("connections-screen")
+  const field = byId("custom-api-base-url")
+  if (field) window.requestAnimationFrame(() => field.focus())
 }
 
 function formatBytes(bytes) {
@@ -1951,7 +1957,7 @@ function chooseCard(direction) {
   toast.textContent = result
   toast.classList.add("show")
   schedule(() => toast.classList.remove("show"), 660)
-  schedule(() => advanceAfterChoice(newlyUnlocked), 760)
+  schedule(() => advanceAfterChoice(newlyUnlocked), 940)
 }
 
 function cancelDrag() {
@@ -2704,7 +2710,7 @@ function resetQuickNoteComposer() {
   byId("quick-note-input").value = ""
   byId("quick-note-input").style.height = ""
   byId("quick-note-count").textContent = `0 / ${QUICK_NOTE_MAX_LENGTH}`
-  byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
+  byId("quick-note-status").textContent = ""
   clearQuickNotePhoto()
   closeQuickNoteComposer()
 }
@@ -3565,6 +3571,20 @@ function memoryArchiveEntries() {
     }
   })
 
+  readTideCardRecords().forEach((record) => {
+    const card = tideCardFromId(record.id)
+    if (!card) return
+    entries.push({
+      id: `card-${record.id}`,
+      sourceId: `tide-card:${record.id}`,
+      dateKey: memoryDateKey(record.collectedAt),
+      timestamp: record.collectedAt,
+      type: "card",
+      label: `潮笺 · ${card.label}`,
+      copy: card.text
+    })
+  })
+
   return entries.sort((a, b) => a.timestamp - b.timestamp)
 }
 
@@ -3593,7 +3613,7 @@ function renderMemoryDay(entries) {
       item.dataset.type = entry.type
       const marker = document.createElement("span")
       marker.setAttribute("aria-hidden", "true")
-      marker.textContent = entry.type === "echo" ? "⌁" : "＋"
+      marker.textContent = entry.type === "echo" ? "⌁" : entry.type === "card" ? "▱" : "＋"
       const content = document.createElement("div")
       const label = document.createElement("strong")
       label.textContent = entry.label
@@ -3606,7 +3626,7 @@ function renderMemoryDay(entries) {
   }
   const more = byId("memory-day-more")
   more.hidden = entries.length <= 3
-  more.textContent = entries.length > 3 ? `还有 ${entries.length - 3} 个片段，可从闪念或回响入口查看。` : ""
+  more.textContent = entries.length > 3 ? `还有 ${entries.length - 3} 个片段，可从闪念、回响或卡槽入口查看。` : ""
 }
 
 function readMonthlyMemoryCache() {
@@ -3870,6 +3890,7 @@ function renderMemoryArchive({ forceReflection = false, generateReflection = fal
     button.className = "memory-day"
     button.classList.toggle("has-thought", dayEntries.some((entry) => entry.type === "thought"))
     button.classList.toggle("has-echo", dayEntries.some((entry) => entry.type === "echo"))
+    button.classList.toggle("has-card", dayEntries.some((entry) => entry.type === "card"))
     button.classList.toggle("is-today", dateKey === todayKey)
     button.classList.toggle("is-selected", dateKey === memorySelectedDateKey)
     button.setAttribute("role", "gridcell")
@@ -3887,8 +3908,13 @@ function renderMemoryArchive({ forceReflection = false, generateReflection = fal
 
   const thoughtCount = entriesInMonth.filter((entry) => entry.type === "thought").length
   const echoCount = new Set(entriesInMonth.filter((entry) => entry.type === "echo").map((entry) => entry.sourceId)).size
-  byId("memory-month-total").textContent = thoughtCount + echoCount > 0
-    ? `${thoughtCount} 条闪念 · ${echoCount} 个回响`
+  const cardCount = entriesInMonth.filter((entry) => entry.type === "card").length
+  const totalParts = []
+  if (thoughtCount) totalParts.push(`${thoughtCount} 条闪念`)
+  if (echoCount) totalParts.push(`${echoCount} 个回响`)
+  if (cardCount) totalParts.push(`${cardCount} 张潮笺`)
+  byId("memory-month-total").textContent = totalParts.length > 0
+    ? totalParts.join(" · ")
     : "这个月还没有留下记录"
   byId("memory-month-next").disabled = prefix >= memoryMonthKey(new Date())
   renderMemoryDay(entriesByDate.get(memorySelectedDateKey) || [])
@@ -4128,7 +4154,7 @@ byId("quick-note-input").addEventListener("input", (event) => {
   event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 96)}px`
   byId("quick-note-count").textContent = `${length} / ${QUICK_NOTE_MAX_LENGTH}`
   updateQuickNoteSaveState()
-  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = "文字、日期和表达类型保存在本机；原图与语音文件不保存"
+  if (!quickNoteVoiceStartedAt) byId("quick-note-status").textContent = ""
 })
 ;[byId("quick-note-photo-input"), byId("quick-note-camera-input")].forEach((input) => {
   input.addEventListener("change", (event) => {
@@ -4422,8 +4448,16 @@ document.querySelectorAll("[data-custom-asr-field]").forEach((field) => {
 document.querySelectorAll("[data-credential-target]").forEach((button) => {
   button.addEventListener("click", toggleCredentialVisibility)
 })
-byId("enable-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: true }))
+byId("enable-ai-consent").addEventListener("click", () => {
+  if (!hasApiSettings()) {
+    closeAiConsent({ accepted: false })
+    goToApiSettings()
+    return
+  }
+  closeAiConsent({ accepted: true })
+})
 byId("decline-ai-consent").addEventListener("click", () => closeAiConsent({ accepted: false }))
+byId("ai-consent-back").addEventListener("click", () => closeAiConsent({ accepted: false }))
 byId("ai-service-consent").addEventListener("change", (event) => {
   profileRuntime.setConsent({
     serviceProcessing: event.currentTarget.checked,

@@ -1157,3 +1157,64 @@ button.slot-card { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ===== 用户反馈调整 ===== */
+
+/* #1 基础日报：背景光斑压住文字 → 文字提到光斑之上并降低光斑不透明度 */
+.report-preview-meta,
+.daily-report-preview .report-basis-chips,
+.daily-report-preview .report-open-button { position: relative; z-index: 2; }
+.daily-report-preview h2 { z-index: 2; }
+.daily-report-preview .report-aurora { opacity: .4; }
+
+/* #2 AI 授权弹窗：原本没有底色导致深色文字看不清 → 补纸面底色；左上角加返回按钮 */
+.safety-modal { position: relative; width: 100%; padding: 24px 21px 20px; border-radius: 27px; color: var(--ink); background: var(--paper); box-shadow: 0 -17px 48px rgba(0,0,0,.28); }
+.safety-modal h2 { margin: 8px 0 12px; font-family: Georgia, "Songti SC", serif; font-size: 22px; font-weight: 500; line-height: 1.45; }
+.safety-modal > p { color: var(--ink-soft); font-size: 11px; line-height: 1.65; }
+.safety-modal .eyebrow { color: var(--forest); }
+.ai-consent-modal { padding-top: 52px; }
+.ai-consent-modal ul li { margin-bottom: 4px; }
+.modal-back { position: absolute; top: 13px; left: 13px; display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 50%; color: var(--ink); background: #eee7da; cursor: pointer; font-size: 20px; line-height: 1; }
+.modal-back:hover { background: #e5dccb; }
+
+/* #3 首页两个入口更明显 */
+.home-entry { border-color: rgba(49,92,79,.2); background: var(--paper); box-shadow: 0 10px 22px rgba(24,43,36,.1); }
+.home-entry strong { font-size: 14px; }
+.home-entry small { font-size: 9px; }
+.home-entry.primary-entry { color: #fff8ef; border-color: transparent; background: linear-gradient(140deg, #315c4f, #4a7666); box-shadow: 0 15px 30px rgba(24,43,36,.26); }
+.home-entry.primary-entry small { color: rgba(255,248,239,.74); }
+.home-entry.primary-entry i { color: #f4dfae; }
+.home-entry.primary-entry .home-entry-icon { color: #f4dfae; background: rgba(255,255,255,.17); }
+.home-entry.echo-entry { border-color: rgba(93,116,105,.34); }
+
+/* #5 “进入第一章”按钮内容居中 */
+.primary-button.centered-button { justify-content: center; gap: 10px; }
+
+/* #6 情景卡：卡内文字居中；点击左右按钮时卡片滑出速度放慢 */
+.story-card .card-meta { position: relative; justify-content: center; text-align: center; }
+.story-card .card-symbol { position: absolute; top: 0; right: 0; }
+.story-card .speaker, .story-card .speaker-role { text-align: center; }
+.story-card.exit-left, .story-card.exit-right { transition: transform .8s cubic-bezier(.33,.66,.4,1), opacity .7s ease; }
+
+/* #7 我的时光：把当天收下的潮笺按日期显示出来 */
+.memory-day.has-card { color: #e7d19a; background: radial-gradient(circle at 40% 36%, rgba(216,187,120,.5), rgba(150,120,54,.22) 46%, rgba(255,255,255,.04) 72%); }
+.memory-day.has-card.has-thought, .memory-day.has-card.has-echo, .memory-day.has-card.has-thought.has-echo { color: #f4e7c2; }
+.memory-legend i.is-card { background: #e2c886; box-shadow: 0 0 5px rgba(226,200,134,.4); }
+.memory-day-item[data-type="card"] > span { color: #ecd6a0; background: rgba(216,187,120,.16); }
+
+/* #8 today's reflection：标题不再被同色背景光斑压住 */
+.complete-screen { background: radial-gradient(circle at 50% 12%, rgba(216,187,120,.12), transparent 30%), linear-gradient(160deg, #10201b, #29493e); }
+.complete-screen .eyebrow { position: relative; z-index: 2; color: #f0dcac; text-shadow: 0 1px 8px rgba(8,20,16,.55); }
+.complete-screen > h1 { position: relative; z-index: 2; }
+
+/* #9 对话页右上角麦克风（现为实时转写）录音时高亮 */
+.voice-mode-trigger.is-listening { color: #fff9ef; background: #9b675f; animation: voicePulse 1.25s ease-in-out infinite; }
+
+/* #11 自定义模型 API 默认折叠，可展开 */
+.api-collapse { margin: 0; }
+.api-collapse-summary { display: flex; gap: 10px; align-items: center; list-style: none; cursor: pointer; }
+.api-collapse-summary::-webkit-details-marker { display: none; }
+.api-collapse-summary .settings-title-row { flex: 1; margin: 0; }
+.api-collapse-caret { flex: 0 0 auto; color: var(--ink-faint); font-size: 12px; transition: transform .2s; }
+.api-collapse[open] .api-collapse-caret { transform: rotate(180deg); }
+.custom-api-card .custom-api-form { margin-top: 14px; }

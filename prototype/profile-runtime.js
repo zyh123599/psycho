@@ -308,7 +308,10 @@ export class ProfileRuntime {
       this.generation += 1
       this.controller?.abort()
     }
-    this.onStatus({ state: "consent", message: "AI 授权设置已更新" })
+    this.onStatus({
+      state: "consent",
+      message: this.consent.profilePersonalization ? "持续画像已开启" : "尚未启用持续画像"
+    })
     return this.consent
   }
 
