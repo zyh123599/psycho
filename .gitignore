@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.DS_Store
+node_modules/
+.gradle-home/
+
+# Capacitor / Android local build files
+android/.gradle/
+android/.idea/
+android/local.properties
+android/app/build/
+android/build/

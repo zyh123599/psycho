@@ -92,7 +92,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:no
   z-index: 2;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 48px 24px calc(30px + env(safe-area-inset-bottom));
+  padding: calc(48px + env(safe-area-inset-top)) 24px calc(30px + env(safe-area-inset-bottom));
   scrollbar-width: none;
   animation: screenIn .38s cubic-bezier(.22, .78, .2, 1);
 }
@@ -622,7 +622,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:no
 }
 
 @media (max-height: 760px) {
-  .screen { padding-top: 36px; }
+  .screen { padding-top: calc(36px + env(safe-area-inset-top)); }
   .today-hero { height: 236px; }
   .tide-orb { top: 27px; width: 145px; height: 145px; }
   .floating-note { width: 75px; height: 62px; font-size: 9px; }
