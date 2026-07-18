@@ -549,6 +549,38 @@
             <h1 id="settings-title" tabindex="-1">我的</h1>
             <p>你决定留下什么，也可以随时把它带走。</p>
           </div>
+          <section class="memory-archive-card" aria-labelledby="memory-archive-title">
+            <div class="memory-archive-head">
+              <div>
+                <p>MY TRACE</p>
+                <h2 id="memory-archive-title">我的时光</h2>
+              </div>
+              <div class="memory-month-switcher" aria-label="切换月份">
+                <button id="memory-month-previous" type="button" aria-label="查看上个月">‹</button>
+                <strong id="memory-month-label">本月</strong>
+                <button id="memory-month-next" type="button" aria-label="查看下个月">›</button>
+              </div>
+            </div>
+            <p class="memory-archive-intro">闪念与未来回响会落在各自的日期里，慢慢连成一张只属于你的时间卡。</p>
+            <div class="memory-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+            <div class="memory-calendar" id="memory-calendar" role="grid" aria-label="本月时光记录"></div>
+            <div class="memory-legend" aria-label="日期标记说明">
+              <span><i class="is-thought"></i>闪念</span>
+              <span><i class="is-echo"></i>未来回响</span>
+              <strong id="memory-month-total">还没有留下记录</strong>
+            </div>
+            <article class="memory-day-card" id="memory-day-card">
+              <div class="memory-day-heading">
+                <div><small>SELECTED DAY</small><h3 id="memory-day-label">今天</h3></div>
+                <span id="memory-day-count">0 个片段</span>
+              </div>
+              <div class="memory-day-items" id="memory-day-items"></div>
+              <div class="memory-day-actions">
+                <button type="button" data-nav-target="thoughts-screen">写一条闪念</button>
+                <button type="button" data-nav-target="echoes-screen">打开未来回响</button>
+              </div>
+            </article>
+          </section>
           <section class="settings-card impression-card">
             <div class="impression-meta"><span>初印象</span><small>轻量画像 · 可随时修正</small></div>
             <h2 id="impression-title">你似乎愿意先看清一点，再决定下一步。</h2>

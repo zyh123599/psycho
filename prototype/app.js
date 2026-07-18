@@ -395,6 +395,8 @@ let quickNoteVoiceStartedAt = 0
 let quickNoteRecordingTimer = null
 let voiceInputActive = false
 let ephemeralAnswerRecord = null
+let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+let memorySelectedDateKey = ""
 const runtimeTimers = new Set()
 
 function schedule(callback, delay) {
@@ -452,6 +454,13 @@ async function toggleBackgroundMusic() {
     backgroundMusic.pause()
   }
   syncBackgroundMusicButton()
+}
+
+function forwardMusicControlWheel(event) {
+  const activeScreen = byId(activeScreenId)
+  if (!activeScreen || activeScreen.scrollHeight <= activeScreen.clientHeight) return
+  event.preventDefault()
+  activeScreen.scrollTop += event.deltaY
 }
 
 function showScreen(screenOrId, options = {}) {
@@ -2138,6 +2147,178 @@ function updateDueEchoCard() {
   byId("due-echo-card").hidden = !hasDue
 }
 
+function memoryDateKey(timestamp) {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function memoryMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function memoryArchiveEntries() {
+  const now = Date.now()
+  const entries = []
+
+  readQuickNotes().forEach((record) => {
+    let copy = record.text.trim()
+    if (!copy && record.imageData) copy = "一张图片闪念"
+    if (!copy && record.voiceDuration > 0) copy = `一段 ${formatVoiceDuration(record.voiceDuration)} 的语音闪念`
+    entries.push({
+      id: `thought-${record.id}`,
+      dateKey: memoryDateKey(record.createdAt),
+      timestamp: record.createdAt,
+      type: "thought",
+      label: "闪念",
+      copy
+    })
+  })
+
+  readEchoes().forEach((record) => {
+    const isDue = record.dueAt <= now
+    const createdKey = memoryDateKey(record.createdAt)
+    const dueKey = memoryDateKey(record.dueAt)
+    entries.push({
+      id: `echo-created-${record.id}`,
+      dateKey: createdKey,
+      timestamp: record.createdAt,
+      type: "echo",
+      label: "留给未来",
+      copy: isDue ? record.text : `一条回响正在封存，将在 ${formatEchoDate(record.dueAt)} 打开`
+    })
+    if (dueKey !== createdKey) {
+      entries.push({
+        id: `echo-due-${record.id}`,
+        dateKey: dueKey,
+        timestamp: record.dueAt,
+        type: "echo",
+        label: isDue ? "回到今天" : "等待回响",
+        copy: isDue ? record.text : "这一天，会有一句话重新回到这里"
+      })
+    }
+  })
+
+  return entries.sort((a, b) => a.timestamp - b.timestamp)
+}
+
+function renderMemoryDay(entries) {
+  const selectedDate = memorySelectedDateKey
+    ? new Date(`${memorySelectedDateKey}T12:00:00`)
+    : new Date()
+  byId("memory-day-label").textContent = new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "short"
+  }).format(selectedDate)
+  byId("memory-day-count").textContent = `${entries.length} 个片段`
+
+  const list = byId("memory-day-items")
+  list.replaceChildren()
+  if (entries.length === 0) {
+    const empty = document.createElement("p")
+    empty.className = "memory-day-empty"
+    empty.textContent = "这一天还没有存档。写下一点什么，它就会在这里亮起来。"
+    list.append(empty)
+    return
+  }
+
+  entries.slice(0, 3).forEach((entry) => {
+    const item = document.createElement("article")
+    item.className = "memory-day-item"
+    item.dataset.type = entry.type
+    const marker = document.createElement("span")
+    marker.setAttribute("aria-hidden", "true")
+    marker.textContent = entry.type === "echo" ? "⌁" : "＋"
+    const content = document.createElement("div")
+    const label = document.createElement("strong")
+    label.textContent = entry.label
+    const copy = document.createElement("p")
+    copy.textContent = entry.copy
+    content.append(label, copy)
+    item.append(marker, content)
+    list.append(item)
+  })
+}
+
+function renderMemoryArchive() {
+  const year = memoryMonthCursor.getFullYear()
+  const month = memoryMonthCursor.getMonth()
+  const prefix = memoryMonthKey(memoryMonthCursor)
+  const entries = memoryArchiveEntries()
+  const entriesInMonth = entries.filter((entry) => entry.dateKey.startsWith(prefix))
+  const entriesByDate = new Map()
+  entriesInMonth.forEach((entry) => {
+    const dayEntries = entriesByDate.get(entry.dateKey) || []
+    dayEntries.push(entry)
+    entriesByDate.set(entry.dateKey, dayEntries)
+  })
+
+  const todayKey = memoryDateKey(Date.now())
+  if (!memorySelectedDateKey.startsWith(prefix)) {
+    const activeDates = Array.from(entriesByDate.keys()).sort()
+    memorySelectedDateKey = todayKey.startsWith(prefix)
+      ? todayKey
+      : (activeDates[activeDates.length - 1] || `${prefix}-01`)
+  }
+
+  byId("memory-month-label").textContent = `${year} / ${month + 1}`
+  byId("memory-calendar").setAttribute("aria-label", `${year}年${month + 1}月时光记录`)
+  const calendar = byId("memory-calendar")
+  calendar.replaceChildren()
+
+  const leadingDays = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  for (let index = 0; index < leadingDays; index += 1) {
+    const spacer = document.createElement("span")
+    spacer.className = "memory-day-spacer"
+    spacer.setAttribute("aria-hidden", "true")
+    calendar.append(spacer)
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = `${prefix}-${String(day).padStart(2, "0")}`
+    const dayEntries = entriesByDate.get(dateKey) || []
+    const hasThought = dayEntries.some((entry) => entry.type === "thought")
+    const hasEcho = dayEntries.some((entry) => entry.type === "echo")
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "memory-day"
+    button.classList.toggle("has-thought", hasThought)
+    button.classList.toggle("has-echo", hasEcho)
+    button.classList.toggle("is-today", dateKey === todayKey)
+    button.classList.toggle("is-selected", dateKey === memorySelectedDateKey)
+    button.setAttribute("role", "gridcell")
+    button.setAttribute("aria-selected", String(dateKey === memorySelectedDateKey))
+    button.setAttribute("aria-label", `${month + 1}月${day}日，${dayEntries.length}个片段`)
+    const number = document.createElement("span")
+    number.textContent = String(day)
+    button.append(number)
+    button.addEventListener("click", () => {
+      memorySelectedDateKey = dateKey
+      renderMemoryArchive()
+    })
+    calendar.append(button)
+  }
+
+  const thoughtCount = entriesInMonth.filter((entry) => entry.type === "thought").length
+  const echoCount = new Set(
+    entriesInMonth.filter((entry) => entry.type === "echo").map((entry) => entry.id.replace(/^(echo-created|echo-due)-/, ""))
+  ).size
+  byId("memory-month-total").textContent = thoughtCount + echoCount > 0
+    ? `${thoughtCount} 条闪念 · ${echoCount} 个回响`
+    : "这个月还没有留下记录"
+  renderMemoryDay(entriesByDate.get(memorySelectedDateKey) || [])
+}
+
+function shiftMemoryMonth(offset) {
+  memoryMonthCursor = new Date(memoryMonthCursor.getFullYear(), memoryMonthCursor.getMonth() + offset, 1)
+  memorySelectedDateKey = ""
+  renderMemoryArchive()
+}
+
 function updateSettingsStorageState() {
   const button = byId("settings-clear-echoes")
   const count = readEchoes().length
@@ -2151,6 +2332,7 @@ function updateSettingsStorageState() {
   byId("my-card-slot-count").textContent = cardCount === 0 ? "还没有收下潮笺" : `已经收下 ${cardCount} 张潮笺`
   byId("my-echo-count").textContent = count === 0 ? "还没有留给未来的话" : `已经保存 ${count} 条回响`
   renderInitialImpression()
+  renderMemoryArchive()
 }
 
 function openOnboarding(event) {
@@ -2266,6 +2448,7 @@ byId("open-daily-report").addEventListener("click", () => showScreen("report-scr
 byId("report-back").addEventListener("click", () => showScreen("today-screen"))
 byId("report-start-chat").addEventListener("click", () => openStandaloneChat({ fromReport: true }))
 backgroundMusicToggle.addEventListener("click", toggleBackgroundMusic)
+backgroundMusicToggle.addEventListener("wheel", forwardMusicControlWheel, { passive: false })
 backgroundMusic.addEventListener("play", syncBackgroundMusicButton)
 backgroundMusic.addEventListener("pause", syncBackgroundMusicButton)
 backgroundMusic.addEventListener("error", () => {
@@ -2514,6 +2697,8 @@ byId("finish-flow").addEventListener("click", finishFlow)
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-tide-cards").addEventListener("click", clearAllTideCards)
+byId("memory-month-previous").addEventListener("click", () => shiftMemoryMonth(-1))
+byId("memory-month-next").addEventListener("click", () => shiftMemoryMonth(1))
 
 byId("keep-tide-quote").addEventListener("click", () => closeTideQuote(true))
 byId("skip-tide-quote").addEventListener("click", () => closeTideQuote(false))
