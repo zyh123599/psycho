@@ -1555,6 +1555,7 @@ function describeTideEffect(effect) {
 }
 
 function renderTideMeters(stirredKeys = []) {
+  const compass = byId("tide-compass")
   Object.entries(tideMeta).forEach(([key, meta]) => {
     const meter = document.querySelector(`[data-tide="${key}"]`)
     if (!meter) return
@@ -1565,11 +1566,20 @@ function renderTideMeters(stirredKeys = []) {
     meter.setAttribute("aria-valuetext", value >= 100 ? `${meta.label}已经满格` : `${meta.label}正在积累`)
     meter.classList.toggle("is-full", flow.unlockedTides.includes(key))
     meter.classList.remove("is-stirred")
+    compass?.style.setProperty(`--${key}-level`, String(value / 100))
+    const compassNode = compass?.querySelector(`[data-compass-tide="${key}"]`)
+    compassNode?.classList.toggle("is-full", flow.unlockedTides.includes(key))
+    compassNode?.classList.remove("is-stirred")
 
     if (stirredKeys.includes(key)) {
       void meter.offsetWidth
       meter.classList.add("is-stirred")
+      if (compassNode) {
+        void compassNode.offsetWidth
+        compassNode.classList.add("is-stirred")
+      }
       schedule(() => meter.classList.remove("is-stirred"), 720)
+      schedule(() => compassNode?.classList.remove("is-stirred"), 720)
     }
   })
 }
@@ -1907,8 +1917,8 @@ function renderCard() {
   byId("right-button-label").textContent = card.right.label
   const leftEffect = tideEffectFor(flow.currentCard, "left")
   const rightEffect = tideEffectFor(flow.currentCard, "right")
-  byId("left-tide-hint").textContent = describeTideEffect(leftEffect)
-  byId("right-tide-hint").textContent = describeTideEffect(rightEffect)
+  byId("left-tide-hint").textContent = "向左滑动"
+  byId("right-tide-hint").textContent = "向右滑动"
   byId("left-button").setAttribute("aria-label", `${card.left.label}；牵动 ${describeTideEffect(leftEffect)}`)
   byId("right-button").setAttribute("aria-label", `${card.right.label}；牵动 ${describeTideEffect(rightEffect)}`)
   byId("neutral-button").setAttribute("aria-label", `两个都不像；牵动 ${describeTideEffect(neutralTideEffect)}`)
@@ -4293,7 +4303,7 @@ byId("right-button").addEventListener("click", () => chooseCard("right"))
 byId("neutral-button").addEventListener("click", () => chooseCard("neutral"))
 
 storyCard.addEventListener("pointerdown", (event) => {
-  if (locked || event.button !== 0) return
+  if (locked || event.button !== 0 || event.target.closest("button")) return
   dragging = true
   dragStartX = event.clientX
   dragX = 0
@@ -4327,6 +4337,7 @@ storyCard.addEventListener("lostpointercapture", () => {
   if (dragging && !locked) cancelDrag()
 })
 storyCard.addEventListener("keydown", (event) => {
+  if (event.target !== storyCard) return
   const directions = {
     ArrowLeft: "left",
     ArrowRight: "right",

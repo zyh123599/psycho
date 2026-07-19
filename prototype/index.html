@@ -276,8 +276,21 @@
 
           <div class="scene" id="scene" aria-hidden="true">
             <div class="scene-halo"></div>
-            <div class="portrait" id="portrait">息</div>
-            <div class="scene-line"></div>
+            <div class="tide-compass" id="tide-compass">
+              <i class="compass-ring compass-ring-outer"></i>
+              <i class="compass-ring compass-ring-middle"></i>
+              <i class="compass-ring compass-ring-inner"></i>
+              <span class="compass-axis compass-axis-insight"><i></i></span>
+              <span class="compass-axis compass-axis-grounding"><i></i></span>
+              <span class="compass-axis compass-axis-connection"><i></i></span>
+              <span class="compass-axis compass-axis-vitality"><i></i></span>
+              <span class="compass-star"></span>
+              <span class="compass-node compass-node-insight" data-compass-tide="insight">◐</span>
+              <span class="compass-node compass-node-grounding" data-compass-tide="grounding">⌁</span>
+              <span class="compass-node compass-node-connection" data-compass-tide="connection">∞</span>
+              <span class="compass-node compass-node-vitality" data-compass-tide="vitality">✦</span>
+            </div>
+            <span class="sr-only" id="portrait">息</span>
           </div>
 
           <section class="card-zone" aria-live="polite">
@@ -294,14 +307,13 @@
               <p class="prompt" id="prompt"></p>
               <div class="card-divider"></div>
               <p class="card-whisper" id="card-whisper"></p>
+              <div class="choice-actions">
+                <button class="choice-button left" id="left-button" type="button"><span class="choice-arrow" aria-hidden="true">←</span><span class="choice-copy"><strong id="left-button-label"></strong><small id="left-tide-hint"></small></span></button>
+                <button class="choice-button right" id="right-button" type="button"><span class="choice-arrow" aria-hidden="true">→</span><span class="choice-copy"><strong id="right-button-label"></strong><small id="right-tide-hint"></small></span></button>
+                <button class="neutral-button" id="neutral-button" type="button">两个都不像</button>
+              </div>
             </article>
           </section>
-
-          <div class="choice-actions">
-            <button class="choice-button left" id="left-button" type="button"><span class="choice-arrow" aria-hidden="true">←</span><span class="choice-copy"><strong id="left-button-label"></strong><small id="left-tide-hint"></small></span></button>
-            <button class="choice-button right" id="right-button" type="button"><span class="choice-copy"><strong id="right-button-label"></strong><small id="right-tide-hint"></small></span><span class="choice-arrow" aria-hidden="true">→</span></button>
-            <button class="neutral-button" id="neutral-button" type="button">两个都不像</button>
-          </div>
           <p class="swipe-help sr-only" id="swipe-help">滑动、点击，或使用键盘 ← → ↓</p>
           <div class="result-toast" id="result-toast" role="status"></div>
         </section>
