@@ -468,6 +468,7 @@ let asrSettingsTestAbortController = null
 let ephemeralAnswerRecord = null
 let memoryMonthCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 let memorySelectedDateKey = ""
+let memoryDayExpanded = false
 let memoryReflectionAbortController = null
 let memoryReflectionRequest = 0
 let memoryReflectionRunningFingerprint = ""
@@ -982,11 +983,17 @@ function renderAiState() {
   }
 }
 
+const AI_CONSENT_DISMISS_KEY = "xinchao.ai-consent-dismissed"
+function aiConsentDismissed() {
+  try { return window.localStorage.getItem(AI_CONSENT_DISMISS_KEY) === "1" } catch (_e) { return false }
+}
+
 function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能" } = {}) {
   const consent = profileRuntime.consent
   if (consent.serviceProcessing && (!profileRequested || consent.profilePersonalization)) {
     return Promise.resolve(consent)
   }
+  if (aiConsentDismissed()) return Promise.resolve(consent)
   if (pendingAiConsentPromise) return pendingAiConsentPromise
 
   aiConsentReturnFocus = document.activeElement
@@ -997,6 +1004,7 @@ function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能
   const profileCheckbox = byId("consent-profile-personalization")
   profileCheckbox.checked = consent.profilePersonalization
   byId("ai-profile-consent-row").classList.toggle("is-requested", profileRequested)
+  byId("ai-consent-dontask").checked = false
   aiConsentModal.hidden = false
   window.requestAnimationFrame(() => byId("enable-ai-consent").focus())
 
@@ -1009,6 +1017,9 @@ function requestAiConsent({ profileRequested = false, reason = "使用 AI 功能
 function closeAiConsent({ accepted }) {
   if (aiConsentModal.hidden) return
   const requestedProfile = byId("consent-profile-personalization").checked
+  if (byId("ai-consent-dontask").checked) {
+    try { window.localStorage.setItem(AI_CONSENT_DISMISS_KEY, "1") } catch (_e) {}
+  }
   if (accepted) {
     profileRuntime.setConsent({
       serviceProcessing: true,
@@ -1251,7 +1262,6 @@ function startFlow(seedNote = "") {
   byId("notes-personalize").checked = true
   byId("custom-theme").value = ""
   byId("custom-echo").value = ""
-  byId("save-echo").checked = false
   renderNotes(seedNote.trim() ? 1 : -1)
   renderNoteImages()
   showScreen("notes-screen")
@@ -2042,7 +2052,7 @@ function renderChat() {
   }
 
   byId("chat-crisis-panel").hidden = !flow.chatCrisis
-  byId("chat-quick-prompts").hidden = flow.chatCrisis
+  byId("chat-quick-prompts").hidden = flow.chatCrisis || flow.chatMessages.length > 0
   const promptButtons = Array.from(document.querySelectorAll("[data-chat-prompt]"))
   if (flow.chatSuggestedPrompts.length > 0) {
     promptButtons.forEach((button, index) => {
@@ -2553,23 +2563,11 @@ function updateEchoSelection() {
     button.classList.toggle("is-selected", selected)
   })
 
-  const consent = byId("save-echo")
-  consent.checked = flow.saveEcho
   const canSave = flow.selectedEcho.trim().length > 0
-  const finish = byId("finish-flow")
-  const finishLabel = finish.querySelector("span")
-
-  if (flow.saveEcho) {
-    finish.disabled = !canSave
-    finishLabel.textContent = canSave ? "保存回响，完成本次梳理" : "先选择一句想保存的话"
-    byId("echo-hint").textContent = canSave
-      ? "只会保存这句话与解封日期，其他本次内容不会写入本地"
-      : "请先选择候选句，或写下自己的话"
-  } else {
-    finish.disabled = false
-    finishLabel.textContent = "不保存，完成本次梳理"
-    byId("echo-hint").textContent = "不勾选也可以完成，本次内容会在离开后消失"
-  }
+  byId("finish-flow-save").disabled = !canSave
+  byId("echo-hint").textContent = canSave
+    ? "「保存并完成」会把这句话与解封日期留在本地；「不保存」则本次内容离开后消失"
+    : "选一句候选或自己写一句，就能「保存并完成」；也可以直接「不保存，完成」"
 }
 
 function showEchoScreen() {
@@ -2578,7 +2576,6 @@ function showEchoScreen() {
   flow.echoDelay = 1
   flow.saveEcho = false
   byId("custom-echo").value = ""
-  byId("save-echo").checked = false
 
   showScreen("echo-screen")
   renderEchoCandidates()
@@ -2620,7 +2617,7 @@ function renderAnswerBook() {
   byId("answer-book-result").textContent = record ? `“${answerBookCards[record.index]}”` : ""
   byId("answer-book-prompt").hidden = Boolean(record)
   byId("draw-answer").disabled = Boolean(record)
-  byId("draw-answer").querySelector("span").textContent = record ? "今天已经抽过" : "抽取今日答案"
+  byId("draw-answer").querySelector("span").textContent = record ? "今天已经抽过" : "向左滑，抽今日答案"
   byId("answer-book-status").textContent = record
     ? "这张卡会留到今天结束，明天可以再抽一次"
     : "每天一次，不记录你想的问题"
@@ -3901,6 +3898,7 @@ function renderMemoryArchive({ forceReflection = false, generateReflection = fal
     button.append(number)
     button.addEventListener("click", () => {
       memorySelectedDateKey = dateKey
+      memoryDayExpanded = true
       renderMemoryArchive()
     })
     calendar.append(button)
@@ -3918,6 +3916,7 @@ function renderMemoryArchive({ forceReflection = false, generateReflection = fal
     : "这个月还没有留下记录"
   byId("memory-month-next").disabled = prefix >= memoryMonthKey(new Date())
   renderMemoryDay(entriesByDate.get(memorySelectedDateKey) || [])
+  byId("memory-day-card").classList.toggle("is-open", memoryDayExpanded)
   if (generateReflection) {
     void maybeGenerateMonthlyReflection(prefix, entriesInMonth, { force: forceReflection })
   } else {
@@ -3933,6 +3932,7 @@ function shiftMemoryMonth(offset) {
   memoryReflectionRunningFingerprint = ""
   memoryMonthCursor = next
   memorySelectedDateKey = ""
+  memoryDayExpanded = false
   renderMemoryArchive()
 }
 
@@ -4113,7 +4113,20 @@ document.querySelectorAll("[data-start-new]").forEach((button) => {
 
 byId("start-flow").addEventListener("click", startNewFlow)
 byId("restart-flow").addEventListener("click", startNewFlow)
-byId("draw-answer").addEventListener("click", drawAnswerBookCard)
+;(() => {
+  const book = document.querySelector(".answer-book")
+  if (!book) return
+  let sx = null, sy = null
+  book.addEventListener("pointerdown", (event) => { sx = event.clientX; sy = event.clientY })
+  book.addEventListener("pointercancel", () => { sx = null })
+  book.addEventListener("pointerup", (event) => {
+    if (sx === null) return
+    const dx = event.clientX - sx
+    const dy = event.clientY - sy
+    sx = null
+    if (dx < -48 && Math.abs(dx) > Math.abs(dy) * 1.5 && !byId("draw-answer").disabled) drawAnswerBookCard()
+  })
+})()
 byId("open-daily-report").addEventListener("click", () => showScreen("report-screen"))
 byId("report-back").addEventListener("click", () => showScreen("today-screen"))
 byId("report-start-chat").addEventListener("click", () => openStandaloneChat({ fromReport: true }))
@@ -4414,12 +4427,9 @@ document.querySelectorAll("[data-delay]").forEach((button) => {
     updateEchoSelection()
   })
 })
-byId("save-echo").addEventListener("change", (event) => {
-  flow.saveEcho = event.currentTarget.checked
-  updateEchoSelection()
-})
 byId("echo-back").addEventListener("click", showActionScreen)
-byId("finish-flow").addEventListener("click", finishFlow)
+byId("finish-flow-nosave").addEventListener("click", () => { flow.saveEcho = false; finishFlow() })
+byId("finish-flow-save").addEventListener("click", () => { flow.saveEcho = true; finishFlow() })
 
 byId("clear-echoes").addEventListener("click", clearAllEchoes)
 byId("settings-clear-echoes").addEventListener("click", clearAllEchoes)
@@ -4503,8 +4513,6 @@ cardDetailModal.addEventListener("click", (event) => {
   if (event.target === cardDetailModal) closeCardDetail()
 })
 
-byId("open-onboarding").addEventListener("click", openOnboarding)
-byId("reopen-onboarding").addEventListener("click", openOnboarding)
 byId("open-tutorial-from-settings").addEventListener("click", openOnboarding)
 byId("close-onboarding").addEventListener("click", () => closeOnboarding(true))
 byId("finish-onboarding").addEventListener("click", () => {

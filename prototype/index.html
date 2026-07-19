@@ -29,7 +29,6 @@
                 <span class="ambient-music-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
                 <span class="ambient-music-copy"><strong>雨声</strong><small id="background-music-status">播放</small></span>
               </button>
-              <button class="icon-button tutorial-trigger" id="open-onboarding" type="button" aria-label="查看新手说明">?</button>
             </div>
           </header>
 
@@ -41,11 +40,16 @@
 
           <article class="daily-report-preview">
             <div class="report-aurora" aria-hidden="true"><i></i><span>◐</span></div>
-            <div class="report-preview-meta"><span>今日潮汐</span><small id="today-report-mode">基础日报</small></div>
-            <h2 id="today-report-headline">今天似乎有一点向前的冲劲，也需要给自己留些余地。</h2>
-            <div class="report-basis-chips" id="today-report-basis" aria-label="日报生成依据"></div>
-            <blockquote id="today-report-quote">“今天不用一次走完，只要把下一步放稳。”</blockquote>
-            <button class="report-open-button" id="open-daily-report" type="button"><span>看看今天的生活提案</span><span aria-hidden="true">↗</span></button>
+            <details class="daily-report-collapse">
+              <summary>
+                <div class="report-preview-meta"><span>今日潮汐</span><small id="today-report-mode">基础日报</small></div>
+                <h2 id="today-report-headline">今天似乎有一点向前的冲劲，也需要给自己留些余地。</h2>
+                <span class="daily-report-more" aria-hidden="true">展开今天的专属建议 ▾</span>
+              </summary>
+              <div class="report-basis-chips" id="today-report-basis" aria-label="日报生成依据"></div>
+              <blockquote id="today-report-quote">“今天不用一次走完，只要把下一步放稳。”</blockquote>
+              <button class="report-open-button" id="open-daily-report" type="button"><span>看看今天的生活提案</span><span aria-hidden="true">↗</span></button>
+            </details>
           </article>
 
           <div class="home-entry-grid">
@@ -309,6 +313,7 @@
             <button class="icon-button voice-mode-trigger" id="voice-input" type="button" aria-label="开始实时语音转写到输入框" aria-pressed="false">
               <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path></svg>
             </button>
+            <span class="header-spacer" aria-hidden="true"></span>
           </header>
 
           <div class="chat-heading">
@@ -404,15 +409,14 @@
             <button type="button" data-delay="7" aria-pressed="false">7 天后</button>
           </fieldset>
 
-          <label class="save-consent" for="save-echo">
-            <input id="save-echo" type="checkbox" />
-            <span aria-hidden="true">✓</span>
-            <p><strong>主动保存在这台设备</strong><small>只有勾选后，这句话和解封日期才会写入本地；便贴、主题与选择不会保存。可随时删除。</small></p>
-          </label>
+          <p class="echo-save-note"><span aria-hidden="true">⌁</span><small>「保存并完成」只会把这句话与解封日期写入本地，可随时删除；「不保存」则本次内容离开后消失。</small></p>
 
           <div class="sticky-footer">
-            <p class="form-hint" id="echo-hint" role="status">不勾选也可以完成，本次内容会在离开后消失</p>
-            <button class="primary-button" id="finish-flow" type="button"><span>不保存，完成本次梳理</span><span aria-hidden="true">→</span></button>
+            <p class="form-hint" id="echo-hint" role="status">选一句想留的话即可保存；也可以直接不保存完成</p>
+            <div class="echo-finish-actions">
+              <button class="ghost-button" id="finish-flow-nosave" type="button">不保存，完成</button>
+              <button class="primary-button" id="finish-flow-save" type="button" disabled><span>保存并完成</span><span aria-hidden="true">→</span></button>
+            </div>
           </div>
         </section>
 
@@ -443,7 +447,10 @@
           </section>
 
           <p class="completion-note">这是一张本次心理地图，不是对你的长期定义。明天再来时，可以从新的闪念重新开始。</p>
-          <button class="primary-button light-button" id="restart-flow" type="button"><span>再走一次</span><span aria-hidden="true">↻</span></button>
+          <div class="complete-actions">
+            <button class="ghost-button light-ghost" type="button" data-nav-target="today-screen">返回今天</button>
+            <button class="primary-button light-button" id="restart-flow" type="button"><span>再走一次</span><span aria-hidden="true">↻</span></button>
+          </div>
         </section>
 
         <section class="screen library-screen thoughts-screen" id="thoughts-screen" aria-labelledby="thoughts-title" hidden>
@@ -553,6 +560,7 @@
 
         <section class="screen library-screen" id="echoes-screen" aria-labelledby="echoes-title" hidden>
           <header class="app-header">
+            <button class="back-button" type="button" data-nav-target="today-screen" aria-label="返回今天">←</button>
             <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
             <div class="header-actions" data-music-slot></div>
           </header>
@@ -574,9 +582,7 @@
         <section class="screen settings-screen" id="settings-screen" aria-labelledby="settings-title" hidden>
           <header class="app-header">
             <a class="brand-mark" href="#today" data-nav-target="today-screen" aria-label="返回今天"><span aria-hidden="true">◐</span><strong>心潮</strong></a>
-            <div class="header-actions" data-music-slot>
-              <button class="icon-button tutorial-trigger" id="reopen-onboarding" type="button" aria-label="重新查看新手说明">?</button>
-            </div>
+            <div class="header-actions" data-music-slot></div>
           </header>
           <div class="screen-heading library-heading">
             <p class="eyebrow">YOUR SPACE</p>
@@ -659,7 +665,11 @@
             </button>
           </section>
           <section class="settings-card">
-            <h2>你的内容与偏好</h2>
+            <details class="api-collapse">
+              <summary class="api-collapse-summary">
+                <div class="settings-title-row"><div><h2>你的内容与偏好</h2></div></div>
+                <span class="api-collapse-caret" aria-hidden="true">▾</span>
+              </summary>
             <dl>
               <div><dt>随手闪念</dt><dd>文字、日期和表达类型保存在本机；图片与录音不落盘，图片需逐图授权，语音只保存用户确认提交的转写文字</dd></div>
               <div><dt>章节选择</dt><dd>仅用于本次对话开场与建议，离开后清除</dd></div>
@@ -675,6 +685,7 @@
               <button class="secondary-button" id="settings-clear-tide-cards" type="button">卡槽目前为空</button>
               <button class="secondary-button" id="settings-clear-echoes" type="button">删除全部已保存回响</button>
             </div>
+            </details>
           </section>
           <section class="settings-card subtle-card">
             <h2>关于心潮</h2>
@@ -869,6 +880,10 @@
             <label class="ai-profile-consent-row" id="ai-profile-consent-row" for="consent-profile-personalization">
               <input id="consent-profile-personalization" type="checkbox" />
               <span><strong>另外开启持续画像</strong><small>关键节点异步更新，并在本机保存可删除的多模态文字画像；不默认勾选</small></span>
+            </label>
+            <label class="ai-consent-dismiss" for="ai-consent-dontask">
+              <input id="ai-consent-dontask" type="checkbox" />
+              <span>不再自动弹出（本机记住这个选择，可到「我的」重新开启）</span>
             </label>
             <div class="ai-consent-actions">
               <button class="text-button" id="decline-ai-consent" type="button">继续使用本地功能</button>

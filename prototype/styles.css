@@ -1218,3 +1218,42 @@ button.slot-card { cursor: pointer; }
 .api-collapse-caret { flex: 0 0 auto; color: var(--ink-faint); font-size: 12px; transition: transform .2s; }
 .api-collapse[open] .api-collapse-caret { transform: rotate(180deg); }
 .custom-api-card .custom-api-form { margin-top: 14px; }
+
+/* ===== 交互 / 排版调整 ===== */
+.api-collapse-summary h2 { margin: 0; }
+
+/* 对话页头右上角麦克风删除（隐藏内联转写按钮，保留输入框语音陪伴） */
+#voice-input { display: none; }
+
+/* 未来回想：删除按钮改横排小胶囊，避免"确认删除"竖排 */
+.delete-echo { width: auto; height: auto; min-width: 0; padding: 5px 11px; border-radius: 999px; font-size: 11px; line-height: 1; white-space: nowrap; }
+
+/* 留给未来：不保存 / 保存 左右两个按钮 */
+.echo-save-note { display: flex; gap: 8px; align-items: flex-start; margin: 8px 1px 0; color: var(--ink-faint); font-size: 10px; line-height: 1.5; }
+.echo-save-note > span { color: var(--forest); }
+.echo-finish-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 10px; align-items: center; }
+.echo-finish-actions .ghost-button { min-height: 48px; }
+.echo-finish-actions .primary-button { width: 100%; }
+
+/* 完成页：返回按钮 + 卡片错序下滑入场 */
+.complete-actions { display: flex; gap: 12px; align-items: center; justify-content: center; width: 100%; }
+.complete-actions .primary-button { width: auto; min-height: 48px; padding: 0 22px; }
+.light-ghost { min-height: 48px; padding: 0 18px; border: 1px solid rgba(216,187,120,.42); border-radius: 16px; color: #f0e6d4; background: transparent; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 650; }
+@keyframes completeRise { from { opacity: 0; transform: translateY(-18px); } to { opacity: 1; transform: translateY(0); } }
+.complete-screen .completion-card { animation: completeRise .6s cubic-bezier(.2,.7,.3,1) both; animation-delay: .1s; }
+.complete-screen .completion-tide-collection { animation: completeRise .6s cubic-bezier(.2,.7,.3,1) both; animation-delay: .3s; }
+
+/* 首页日报：默认小占位，可展开成完整建议 */
+.daily-report-collapse { position: relative; z-index: 2; }
+.daily-report-collapse > summary { list-style: none; cursor: pointer; }
+.daily-report-collapse > summary::-webkit-details-marker { display: none; }
+.daily-report-more { display: inline-block; margin-top: 10px; color: #f4dfad; font-size: 11px; font-weight: 700; }
+.daily-report-collapse[open] .daily-report-more { display: none; }
+.daily-report-collapse .report-basis-chips { margin-top: 12px; }
+
+/* 我的时光：日历下方"当日"卡默认收起，点日期渐显 */
+.memory-day-card { overflow: hidden; max-height: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; border-width: 0; opacity: 0; transform: translateY(-6px); transition: max-height .45s ease, opacity .4s ease, transform .4s ease, margin-top .45s ease, padding .45s ease, border-width .45s ease; }
+.memory-day-card.is-open { max-height: 680px; margin-top: 14px; padding-top: 13px; padding-bottom: 13px; border-width: 1px; opacity: 1; transform: translateY(0); }
+
+/* 答案之书：允许横向滑动手势 */
+.answer-book { touch-action: pan-y; }
