@@ -30,6 +30,21 @@ npm run build
 
 Vite 以 `prototype/` 为入口，生产文件输出到 `dist/`。Capacitor 的 `webDir` 也是 `dist/`。
 
+## 打包 Android（含麦克风权限）
+
+`android/` 原生工程是生成物，已被 Git 忽略（在本地或 CI 生成）。录音走网页 `getUserMedia`（`prototype/audio-capture.js`），在 Android WebView 里需要原生工程声明 `RECORD_AUDIO` 权限，否则 `getUserMedia` 会抛出 `NotAllowedError`（界面显示「没有获得麦克风权限」）。
+
+为避免每次重新生成原生工程都丢失权限声明，构建脚本会在生成后自动注入权限，**不改动 `prototype/` 下任何网页代码**：
+
+```bash
+npm run cap:add:android    # 首次：构建 web → 生成 android 工程 → 注入录音权限
+npm run cap:sync:android   # 日常：重新构建 web → 同步到 android → 确保权限存在（幂等）
+```
+
+`scripts/android-mic-permissions.mjs` 会幂等地把以下权限写入 `android/app/src/main/AndroidManifest.xml`：`RECORD_AUDIO`（系统录音）、`MODIFY_AUDIO_SETTINGS`（音频路由）、`INTERNET`（讯飞 `wss://`，模板默认已带）。随后用 Android Studio 打开 `android/` 或执行 `npx cap run android` 构建 APK。Capacitor 的 WebView 会在录音时读取该声明，自动弹出系统授权框并放行网页的录音请求；用户首次点「拒绝」后系统不再弹窗，需到系统设置手动开启。
+
+如已在本地生成过 `android/`，只想补权限而不重新构建，可单独运行 `npm run android:permissions`。
+
 ## 配置自定义 API
 
 启动前端后打开「我的 → 自定义模型 API」，填写：

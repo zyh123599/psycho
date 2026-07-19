@@ -11,7 +11,10 @@
     "preview": "vite preview",
     "ionic:serve": "vite --host 0.0.0.0",
     "ionic:build": "vite build",
-    "cap:doctor": "cap doctor"
+    "cap:doctor": "cap doctor",
+    "cap:add:android": "vite build && cap add android && node scripts/android-mic-permissions.mjs",
+    "cap:sync:android": "vite build && cap sync android && node scripts/android-mic-permissions.mjs",
+    "android:permissions": "node scripts/android-mic-permissions.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",
