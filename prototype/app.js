@@ -42,6 +42,7 @@ const QUICK_NOTE_STORAGE_KEY = "xinchao.quick-notes.v1"
 const MONTHLY_MEMORY_STORAGE_KEY = "xinchao.monthly-memory.v1"
 const ANSWER_BOOK_STORAGE_KEY = "xinchao.answer-book.v1"
 const ONBOARDING_STORAGE_KEY = "xinchao.onboarding.v1"
+const GAME_TUTORIAL_STORAGE_KEY = "xinchao.game-tutorial.v1"
 const QUICK_NOTE_IMAGE_MAX_DATA_LENGTH = 650000
 const REPORT_FEEDBACK_STORAGE_KEY = "xinchao.report-feedback.v1"
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -313,55 +314,65 @@ const dailyReportVariants = {
     headline: "今天似乎有一点向前的冲劲，也需要给自己留些余地。",
     basis: ["先聚焦一件事", "给身体留一个停点"],
     quote: "今天不用一次走完，只要把下一步放稳。",
-    summary: "目前还没有足够的近期信号，所以这是一份基础日报。它不会假装读懂你，只提供几条低负担的生活节奏建议。",
+    summary: "今天从几件很小的生活事开始照顾自己就好。不用全部做到，挑一件此刻最顺手的带走。",
     suggestions: [
-      ["节奏", "先选一件今天最重要的事，完成后再决定是否继续。"],
-      ["身体", "连续专注一段时间后，离开屏幕两分钟，让肩膀和呼吸先回来。"],
-      ["联结", "如果想找人聊聊，可以只发一句真实近况，不必一次解释完整。"]
+      ["穿搭", "选一件让身体舒服的衣服；冷热不确定时，带一层能随时穿脱的薄外套。"],
+      ["饮品", "给自己准备一杯温水或清淡茶饮，放在伸手可及的地方，想起来就喝两口。"],
+      ["社交", "今天只联系一个让你不必逞强的人，哪怕只是发一句简单的近况。"],
+      ["向内", "留五分钟不接收新信息，看看此刻更需要被照顾的是身体、情绪还是任务。"],
+      ["行动", "把手头的事写成三行，只圈出今天最重要的一件，先做十分钟。"]
     ]
   },
   insight: {
     headline: "今天很适合看清重点，但不必把每个念头都解释完。",
     basis: ["近期主动收藏了觉察潮笺", "这类潮笺靠近观察与命名"],
     quote: "先把问题照亮一角，答案可以慢一点来。",
-    summary: "你近期主动收进卡槽的内容包含「觉察」潮笺。它只提供一个可解释的内容线索，不代表固定人格。",
+    summary: "今天可以把生活调得清爽一点，让脑中的声音有地方落下。不用急着想明白全部，只照顾最靠近你的那一件。",
     suggestions: [
-      ["聚焦", "把脑中的问题写成一句话，只处理最想看清的那一部分。"],
-      ["停笔", "反复分析超过十分钟时，先做一件不需要答案的小事。"],
-      ["表达", "用“我注意到……”开头，描述事实，不急着给自己下结论。"]
+      ["穿搭", "选颜色和层次都简单的衣服，少做一个决定，也给思绪留一点空白。"],
+      ["饮品", "准备一杯温热、味道清淡的饮品；念头变密时，先慢慢喝一口再继续。"],
+      ["社交", "想表达时可以从“我最近注意到……”开始，不必马上组织成完整结论。"],
+      ["向内", "把最反复出现的念头写成一句话，再补上一个最接近的感受词。"],
+      ["行动", "只挑一个问题看十五分钟，时间到了先去做一件不需要答案的小事。"]
     ]
   },
   grounding: {
     headline: "今天适合把步子放稳一点，先照顾身体和边界。",
     basis: ["近期主动收藏了安定潮笺", "这类潮笺靠近身体与边界"],
     quote: "先让脚底找到地面，答案可以晚一点来。",
-    summary: "你近期主动收下的内容更靠近「安定」。日报因此把建议放在减速、边界和身体信号上。",
+    summary: "今天适合让身体先有着落，再处理外面的声音。把步子放稳，不代表你停在原地。",
     suggestions: [
-      ["节奏", "给今天安排一个明确停点，到了就先离开正在做的事。"],
-      ["身体", "喝水、松开肩膀，再确认自己是否真的需要继续硬撑。"],
-      ["边界", "面对临时请求，先说“让我看一下安排”，不必立刻答应。"]
+      ["穿搭", "优先选不勒身体的衣服和好走的鞋，让肩颈、腰腹和脚底都轻松一点。"],
+      ["饮品", "第一杯先喝几口温水，再决定要不要咖啡或浓茶，不急着把自己催醒。"],
+      ["社交", "遇到临时请求，可以先说“让我看一下今天的安排”，不用立刻答应。"],
+      ["向内", "坐下时感受脚底和椅子的支撑，慢慢呼气三次，让身体先回到这里。"],
+      ["行动", "在两件事之间留十分钟空隙，不把所有安排首尾相接。"]
     ]
   },
   connection: {
     headline: "今天可以靠近一点真实，也保留只说到这里的权利。",
     basis: ["近期主动收藏了联结潮笺", "这类潮笺靠近表达与关系"],
     quote: "真实不必一次说完，关系可以从一句话开始。",
-    summary: "你近期主动收下的内容更靠近「联结」。这份日报会优先提供表达、倾听和关系边界方面的小建议。",
+    summary: "今天可以靠近一点人，也留一点空间给自己。真正的联结不需要你时刻热闹或把话一次说完。",
     suggestions: [
-      ["表达", "想联系谁时，先发一句近况，不必组织成完整故事。"],
-      ["倾听", "聊天前可以先说清楚：此刻更需要陪伴，还是一起想办法。"],
-      ["边界", "对方没有及时回应，不等于你的表达不重要。先把注意力带回今天。"]
+      ["穿搭", "带上一件让你觉得“很像自己”的小物或颜色，给今天一点熟悉的陪伴感。"],
+      ["饮品", "如果要见人，选一杯自己熟悉的饮品，让聊天开始前先有一点安定。"],
+      ["社交", "只联系一个真正想见或想念的人，发一句近况就够了，不必铺陈完整故事。"],
+      ["向内", "在开口前问问自己：我希望被听见什么，又有哪些部分想暂时留给自己。"],
+      ["行动", "把想说的话缩成一句，发送后先回到自己的生活，不把心悬在回复速度上。"]
     ]
   },
   vitality: {
     headline: "今天有一些向前的力量，也别忘了给自己留下余力。",
     basis: ["近期主动收藏了精力潮笺", "这类潮笺靠近小步行动与恢复"],
     quote: "今天留下的一点力气，也属于完成的一部分。",
-    summary: "你近期主动收下的内容更靠近「精力」。这份日报会提醒你推进一件事，同时避免把可用的力气一次耗尽。",
+    summary: "今天有一点适合向前的力量，但不必把它一次用完。留下来的余力，也会照顾明天的你。",
     suggestions: [
-      ["行动", "只推进一个核心任务，其他事项先放进稍后清单。"],
-      ["恢复", "在还有力气的时候就安排休息，而不是等到完全耗尽。"],
-      ["期待", "把今天的完成标准写小一点，让行动可以真实发生。"]
+      ["穿搭", "选轻便、方便活动的衣服；包里少带一件不必要的东西，也是在给身体减负。"],
+      ["饮品", "开始忙之前先把水放到手边，别等到口渴或疲惫时才想起补充。"],
+      ["社交", "把交流留给真正重要的人和事，今天不必回应每一个群聊与邀约。"],
+      ["向内", "开始下一件事前停一下，问自己现在更适合推进，还是先恢复一点力气。"],
+      ["行动", "只推进一个核心任务，完成一个清楚的小节点后，就允许自己停下来。"]
     ]
   }
 }
@@ -382,6 +393,7 @@ const storyCard = byId("story-card")
 const leftPreview = byId("left-preview")
 const rightPreview = byId("right-preview")
 const onboardingModal = byId("onboarding-modal")
+const gameTutorialModal = byId("game-tutorial-modal")
 const voiceModal = byId("voice-modal")
 const safetyModal = byId("safety-modal")
 const aiConsentModal = byId("ai-consent-modal")
@@ -435,6 +447,7 @@ let dragging = false
 let dragStartX = 0
 let dragX = 0
 let onboardingReturnFocus = null
+let gameTutorialReturnFocus = null
 let voiceModalReturnFocus = null
 let cardDetailReturnFocus = null
 let quickNoteRecords = []
@@ -1216,7 +1229,7 @@ function showScreen(screenOrId, options = {}) {
   if (target.id === "chat-screen") renderChat()
   if (target.id === "cards-screen") renderTideCardLibrary()
   if (target.id === "echoes-screen") renderEchoLibrary()
-  if (target.id === "settings-screen") updateSettingsStorageState()
+  if (["settings-screen", "connections-screen"].includes(target.id)) updateSettingsStorageState()
   if (options.focus !== false) focusScreenHeading(target)
 }
 
@@ -1630,14 +1643,6 @@ function formatDailyDate() {
 function buildDailyReport() {
   const date = formatDailyDate()
   const profileReport = deriveProfileReport(activeProfileEnvelope(), date)
-  if (profileReport) {
-    const fallbackSuggestions = dailyReportVariants.generic.suggestions
-    profileReport.suggestions = [...profileReport.suggestions, ...fallbackSuggestions]
-      .filter((item, index, items) => items.findIndex((candidate) => candidate[1] === item[1]) === index)
-      .slice(0, 3)
-    return profileReport
-  }
-
   const windowStart = Date.now() - 30 * DAY_MS
   const records = readTideCardRecords().filter((record) => record.collectedAt >= windowStart)
   const quickNotes = readQuickNotes().filter((record) => record.createdAt >= windowStart)
@@ -1683,6 +1688,15 @@ function buildDailyReport() {
     noteSignalCount > 0 ? "闪念主题" : "",
     cardSignalCount > 0 ? "主动收藏的潮笺类型" : ""
   ].filter(Boolean)
+  if (profileReport) {
+    return {
+      ...profileReport,
+      summary: variant.summary,
+      suggestions: variant.suggestions,
+      dominant: dominant === "generic" ? "profile" : dominant,
+      signalSources
+    }
+  }
   return {
     ...variant,
     basis: dominant === "generic"
@@ -1692,9 +1706,7 @@ function buildDailyReport() {
           cardSignalCount > 0 ? "近期主动收藏了相关潮笺" : "",
           `这些线索更靠近「${tideMeta[dominant].label}」`
         ].filter(Boolean).slice(0, 2),
-    summary: dominant === "generic"
-      ? variant.summary
-      : `这份日报参考了${signalSources.join("和")}，当前更靠近「${tideMeta[dominant].label}」。它不是对你的固定判断，新的表达会继续修正它。`,
+    summary: variant.summary,
     dominant,
     personalized: dominant !== "generic",
     mode: dominant === "generic" ? "基础日报" : `根据近期${signalSources.join("与")}`,
@@ -1900,7 +1912,8 @@ function beginGame() {
   flow.currentCard = nextUnanswered < 0 ? 0 : nextUnanswered
   showScreen("game-screen", { focus: false })
   renderCard()
-  storyCard.focus({ preventScroll: true })
+  if (shouldAutoOpenGameTutorial()) openGameTutorial()
+  else storyCard.focus({ preventScroll: true })
 }
 
 function chooseCard(direction) {
@@ -2696,15 +2709,24 @@ function resetQuickNoteComposer() {
   closeQuickNoteComposer()
 }
 
+function setQuickNoteAttachmentInputsEnabled(enabled) {
+  const inputIds = ["quick-note-photo-input", "quick-note-camera-input"]
+  inputIds.forEach((id) => {
+    byId(id).disabled = !enabled
+  })
+}
+
 function openQuickNoteComposer() {
   const menu = byId("quick-note-attachment-menu")
   const button = byId("quick-note-add-attachment")
+  setQuickNoteAttachmentInputsEnabled(true)
   menu.hidden = false
   button.setAttribute("aria-expanded", "true")
   button.classList.add("is-open")
 }
 
 function closeQuickNoteComposer() {
+  setQuickNoteAttachmentInputsEnabled(false)
   byId("quick-note-attachment-menu").hidden = true
   byId("quick-note-add-attachment").setAttribute("aria-expanded", "false")
   byId("quick-note-add-attachment").classList.remove("is-open")
@@ -3945,6 +3967,42 @@ function shouldAutoOpenOnboarding() {
   }
 }
 
+function openGameTutorial(event) {
+  gameTutorialReturnFocus = event && event.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : storyCard
+  gameTutorialModal.hidden = false
+  window.requestAnimationFrame(() => byId("close-game-tutorial").focus())
+}
+
+function closeGameTutorial(remember = true) {
+  if (gameTutorialModal.hidden) return
+  gameTutorialModal.hidden = true
+  if (remember) {
+    try {
+      window.localStorage.setItem(GAME_TUTORIAL_STORAGE_KEY, "seen")
+    } catch (_error) {
+      // The tutorial can still be dismissed for this page session.
+    }
+  }
+  if (
+    gameTutorialReturnFocus &&
+    typeof gameTutorialReturnFocus.focus === "function" &&
+    gameTutorialReturnFocus.isConnected
+  ) {
+    gameTutorialReturnFocus.focus({ preventScroll: true })
+  }
+  gameTutorialReturnFocus = null
+}
+
+function shouldAutoOpenGameTutorial() {
+  try {
+    return window.localStorage.getItem(GAME_TUTORIAL_STORAGE_KEY) !== "seen"
+  } catch (_error) {
+    return true
+  }
+}
+
 function setVoiceCallState(active) {
   const button = byId("voice-call-toggle")
   button.setAttribute("aria-pressed", String(active))
@@ -3989,11 +4047,13 @@ function trapModalFocus(event) {
     ? voiceModal
     : (!onboardingModal.hidden
       ? onboardingModal
-      : (!cardDetailModal.hidden
-        ? cardDetailModal
-        : (!tideModal.hidden
-          ? tideModal
-          : (!aiConsentModal.hidden ? aiConsentModal : (!safetyModal.hidden ? safetyModal : null)))))
+      : (!gameTutorialModal.hidden
+        ? gameTutorialModal
+        : (!cardDetailModal.hidden
+          ? cardDetailModal
+          : (!tideModal.hidden
+            ? tideModal
+            : (!aiConsentModal.hidden ? aiConsentModal : (!safetyModal.hidden ? safetyModal : null))))))
   if (!activeModal) return
   const focusable = Array.from(activeModal.querySelectorAll(
     "button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type='hidden']), a[href]"
@@ -4421,6 +4481,13 @@ onboardingModal.addEventListener("click", (event) => {
   if (event.target === onboardingModal) closeOnboarding(true)
 })
 
+byId("open-game-tutorial").addEventListener("click", openGameTutorial)
+byId("close-game-tutorial").addEventListener("click", () => closeGameTutorial(true))
+byId("finish-game-tutorial").addEventListener("click", () => closeGameTutorial(true))
+gameTutorialModal.addEventListener("click", (event) => {
+  if (event.target === gameTutorialModal) closeGameTutorial(true)
+})
+
 byId("close-voice-mode").addEventListener("click", closeVoiceMode)
 byId("voice-call-toggle").addEventListener("click", toggleVoiceCall)
 voiceModal.addEventListener("click", (event) => {
@@ -4450,6 +4517,11 @@ document.addEventListener("keydown", (event) => {
   if (!onboardingModal.hidden && event.key === "Escape") {
     event.preventDefault()
     closeOnboarding(true)
+    return
+  }
+  if (!gameTutorialModal.hidden && event.key === "Escape") {
+    event.preventDefault()
+    closeGameTutorial(true)
     return
   }
   if (!cardDetailModal.hidden && event.key === "Escape") {

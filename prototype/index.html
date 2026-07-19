@@ -43,7 +43,7 @@
             <h2 id="today-report-headline">今天似乎有一点向前的冲劲，也需要给自己留些余地。</h2>
             <div class="report-basis-chips" id="today-report-basis" aria-label="日报生成依据"></div>
             <blockquote id="today-report-quote">“今天不用一次走完，只要把下一步放稳。”</blockquote>
-            <button class="report-open-button" id="open-daily-report" type="button"><span>展开今天的专属建议</span><span aria-hidden="true">↗</span></button>
+            <button class="report-open-button" id="open-daily-report" type="button"><span>看看今天的生活提案</span><span aria-hidden="true">↗</span></button>
           </article>
 
           <div class="home-entry-grid">
@@ -92,7 +92,7 @@
           </div>
 
           <section class="report-content">
-            <div class="report-section-heading"><span>01</span><div><p>DAILY GUIDANCE</p><h2>今天可能有帮助</h2></div></div>
+            <div class="report-section-heading"><span>01</span><div><p>GENTLE DAILY PICKS</p><h2>今天的生活提案</h2></div></div>
             <p class="report-summary" id="report-summary"></p>
             <div class="report-suggestions" id="report-suggestions"></div>
           </section>
@@ -245,7 +245,7 @@
           <header class="flow-header game-header">
             <button class="back-button dark-button" id="game-back" type="button" aria-label="暂时离开章节">←</button>
             <div class="game-progress"><span id="card-count">1 / 6</span><i><b id="card-progress"></b></i></div>
-            <span class="header-spacer" aria-hidden="true"></span>
+            <button class="game-help-button" id="open-game-tutorial" type="button" aria-label="查看情境选择玩法">?</button>
           </header>
 
           <div class="game-context">
@@ -509,8 +509,8 @@
                   </label>
                 </div>
               </div>
-              <input class="sr-only" id="quick-note-photo-input" type="file" accept="image/*" />
-              <input class="sr-only" id="quick-note-camera-input" type="file" accept="image/*" capture="environment" />
+              <input class="sr-only" id="quick-note-photo-input" type="file" accept="image/*" disabled />
+              <input class="sr-only" id="quick-note-camera-input" type="file" accept="image/*" capture="environment" disabled />
               <label class="sr-only" for="quick-note-input">此刻想记下什么？</label>
               <textarea id="quick-note-input" maxlength="200" rows="1" placeholder="留下一点此刻的想法……"></textarea>
               <button class="quick-note-voice-button" id="quick-note-voice" type="button" aria-label="开始实时语音转写闪念" aria-pressed="false">
@@ -625,106 +625,23 @@
               <p class="memory-ai-status" id="memory-ai-status" role="status">当前显示本地日历，不会自动发送内容。</p>
             </article>
           </section>
-          <section class="settings-card custom-api-card">
-            <div class="settings-title-row">
-              <div><h2>自定义模型 API</h2><p>浏览器直接调用 OpenAI 兼容端点，不再经过心潮后端。</p></div>
-              <span class="ai-endpoint-label">仅本机</span>
-            </div>
-            <div class="custom-api-form">
-              <label class="api-field" for="custom-api-base-url">
-                <span>API Base URL</span>
-                <input id="custom-api-base-url" data-custom-api-field type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://your-provider.example/v1" />
-                <small>填写到版本路径，例如 <code>https://example.com/v1</code></small>
-              </label>
-              <label class="api-field" for="custom-api-key">
-                <span>API Key</span>
-                <input id="custom-api-key" data-custom-api-field type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-…" />
-                <small>会以 Bearer Token 发送，只保存在当前浏览器/设备。</small>
-              </label>
-              <div class="api-field-row">
-                <label class="api-field" for="custom-api-model">
-                  <span>模型名称</span>
-                  <input id="custom-api-model" data-custom-api-field type="text" autocomplete="off" spellcheck="false" value="gpt-5.6-sol" />
-                </label>
-                <label class="api-field" for="custom-api-image-detail">
-                  <span>图片理解精度</span>
-                  <select id="custom-api-image-detail" data-custom-api-field>
-                    <option value="high">高</option>
-                    <option value="auto">自动</option>
-                    <option value="low">低（更省 token）</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-            <p class="api-security-note"><strong>请留意：</strong>前端本地保存的 Key 可被同设备上的脚本或扩展读取，不适合公共设备。端点必须允许浏览器 CORS；HTTPS 页面也不能调用 HTTP 地址。</p>
-            <p class="profile-sync-status" id="custom-api-status" role="status">尚未配置自定义 API。</p>
-            <div class="settings-actions api-settings-actions">
-              <button class="secondary-button" id="custom-api-test" type="button">测试当前表单</button>
-              <button class="primary-button" id="custom-api-save" type="button"><span>保存到本机</span><span aria-hidden="true">→</span></button>
-              <button class="danger-text-button" id="custom-api-clear" type="button">清除 API 配置</button>
-            </div>
-          </section>
-          <section class="settings-card custom-api-card">
-            <div class="settings-title-row">
-              <div><h2>自定义语音转写</h2><p>浏览器使用你自己的讯飞凭据直连实时语音转写服务。</p></div>
-              <span class="ai-endpoint-label">仅本机</span>
-            </div>
-            <div class="custom-api-form">
-              <label class="api-field" for="custom-asr-app-id">
-                <span>讯飞 APPID</span>
-                <input id="custom-asr-app-id" data-custom-asr-field type="text" autocomplete="off" spellcheck="false" placeholder="填写控制台中的 APPID" />
-              </label>
-              <div class="api-field">
-                <label for="custom-asr-api-key">讯飞 APIKey</label>
-                <span class="credential-input">
-                  <input id="custom-asr-api-key" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APIKey" />
-                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-key" aria-label="显示 APIKey">显示</button>
-                </span>
-              </div>
-              <div class="api-field">
-                <label for="custom-asr-api-secret">讯飞 APISecret</label>
-                <span class="credential-input">
-                  <input id="custom-asr-api-secret" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APISecret" />
-                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-secret" aria-label="显示 APISecret">显示</button>
-                </span>
-                <small>保存后，三个现有麦克风入口都会优先使用这组凭据。</small>
-              </div>
-            </div>
-            <p class="api-security-note"><strong>请留意：</strong>纯前端无法隐藏 APISecret。本机保存的凭据可被同源脚本、浏览器扩展或持有该设备的人读取，请使用可轮换、限额的独立凭据。</p>
-            <p class="profile-sync-status" id="custom-asr-status" role="status">尚未保存自定义语音转写配置。</p>
-            <div class="settings-actions api-settings-actions">
-              <button class="secondary-button" id="custom-asr-test" type="button">测试当前表单</button>
-              <button class="primary-button" id="custom-asr-save" type="button"><span>保存到本机</span><span aria-hidden="true">→</span></button>
-              <button class="danger-text-button" id="custom-asr-clear" type="button">清除语音转写配置</button>
-            </div>
-          </section>
           <section class="settings-card impression-card">
             <div class="impression-meta"><span>初印象</span><small>轻量画像 · 可随时修正</small></div>
             <h2 id="impression-title">你似乎愿意先看清一点，再决定下一步。</h2>
             <p id="impression-summary">这是根据你主动留下的内容形成的温和提示，不是分数，也不是固定标签。</p>
             <div class="impression-chips" id="impression-chips" aria-label="初印象关键词"></div>
           </section>
-          <section class="settings-card ai-settings-card">
-            <div class="settings-title-row">
-              <div><h2>AI 与持续画像</h2><p>先保存上面的 API 配置；两项授权彼此独立，关闭后立即停止新的请求。</p></div>
-              <span class="ai-endpoint-label">Direct API</span>
-            </div>
-            <label class="settings-toggle" for="ai-service-consent">
-              <input id="ai-service-consent" type="checkbox" />
-              <span><strong>按次使用 AI 服务</strong><small>把当次聊天或明确选中的材料直接发送到你配置的模型服务商</small></span>
-            </label>
-            <label class="settings-toggle" for="ai-profile-consent">
-              <input id="ai-profile-consent" type="checkbox" disabled />
-              <span><strong>持续更新本机画像</strong><small>关键节点异步合并文字、图片理解与互动；只保存文字化结果，不保存原图</small></span>
-            </label>
-            <p class="profile-sync-status" id="settings-ai-status" role="status">尚未启用持续画像</p>
-            <article class="settings-profile-preview" id="settings-profile-preview" hidden>
-              <p>当前可修正画像</p>
-              <h3 id="settings-profile-headline"></h3>
-              <div id="settings-profile-summary"></div>
-              <small id="settings-profile-time"></small>
-            </article>
-            <button class="secondary-button full-width" id="settings-clear-profile" type="button" disabled>删除本机多模态文字画像</button>
+          <section class="settings-card service-entry-card" aria-labelledby="service-entry-title">
+            <p class="eyebrow">CONNECTIONS</p>
+            <h2 id="service-entry-title">服务与连接</h2>
+            <button class="service-settings-link" type="button" data-nav-target="connections-screen">
+              <span class="service-settings-icon" aria-hidden="true">⌁</span>
+              <span>
+                <strong>模型与语音服务</strong>
+                <small>管理自定义 API、实时语音与 AI 授权</small>
+              </span>
+              <i aria-hidden="true">→</i>
+            </button>
           </section>
           <section class="settings-card">
             <h2>我的收藏</h2>
@@ -762,6 +679,118 @@
           </section>
         </section>
 
+        <section class="screen settings-screen connections-screen" id="connections-screen" aria-labelledby="connections-title" hidden>
+          <header class="flow-header">
+            <button class="back-button" type="button" data-nav-target="settings-screen" aria-label="返回我的">←</button>
+            <span class="prototype-pill">连接与隐私</span>
+            <span class="header-spacer" aria-hidden="true"></span>
+          </header>
+          <div class="screen-heading library-heading">
+            <p class="eyebrow">CONNECTIONS</p>
+            <h1 id="connections-title" tabindex="-1">模型与语音服务</h1>
+            <p>只有需要更完整的 AI 与语音能力时才需要配置；其余本地功能仍可照常使用。</p>
+          </div>
+          <section class="connection-overview" aria-label="服务连接说明">
+            <span aria-hidden="true">◐</span>
+            <p><strong>凭据由你管理</strong><small>原型会从当前浏览器直接连接你选择的服务，不经过心潮后端。</small></p>
+          </section>
+          <section class="settings-card custom-api-card">
+            <div class="settings-title-row">
+              <div><h2>自定义模型 API</h2><p>用于聊天、图片理解、个性化叙事与月度回顾。</p></div>
+              <span class="ai-endpoint-label">仅本机</span>
+            </div>
+            <div class="custom-api-form">
+              <label class="api-field" for="custom-api-base-url">
+                <span>API Base URL</span>
+                <input id="custom-api-base-url" data-custom-api-field type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://your-provider.example/v1" />
+                <small>填写到版本路径，例如 <code>https://example.com/v1</code></small>
+              </label>
+              <label class="api-field" for="custom-api-key">
+                <span>API Key</span>
+                <input id="custom-api-key" data-custom-api-field type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-…" />
+                <small>会以 Bearer Token 发送，只保存在当前浏览器/设备。</small>
+              </label>
+              <div class="api-field-row">
+                <label class="api-field" for="custom-api-model">
+                  <span>模型名称</span>
+                  <input id="custom-api-model" data-custom-api-field type="text" autocomplete="off" spellcheck="false" value="gpt-5.6-sol" />
+                </label>
+                <label class="api-field" for="custom-api-image-detail">
+                  <span>图片理解精度</span>
+                  <select id="custom-api-image-detail" data-custom-api-field>
+                    <option value="high">高</option>
+                    <option value="auto">自动</option>
+                    <option value="low">低（更省 token）</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <p class="api-security-note"><strong>请留意：</strong>前端本地保存的 Key 可被同设备上的脚本或扩展读取，不适合公共设备。端点必须允许浏览器 CORS；HTTPS 页面也不能调用 HTTP 地址。</p>
+            <p class="profile-sync-status" id="custom-api-status" role="status">尚未配置自定义 API。</p>
+            <div class="settings-actions api-settings-actions">
+              <button class="secondary-button" id="custom-api-test" type="button">测试模型连接</button>
+              <button class="primary-button" id="custom-api-save" type="button"><span>保存模型配置</span><span aria-hidden="true">→</span></button>
+              <button class="danger-text-button" id="custom-api-clear" type="button">清除 API 配置</button>
+            </div>
+          </section>
+          <section class="settings-card custom-api-card">
+            <div class="settings-title-row">
+              <div><h2>自定义语音转写</h2><p>让三个麦克风入口使用你自己的讯飞实时转写服务。</p></div>
+              <span class="ai-endpoint-label">仅本机</span>
+            </div>
+            <div class="custom-api-form">
+              <label class="api-field" for="custom-asr-app-id">
+                <span>讯飞 APPID</span>
+                <input id="custom-asr-app-id" data-custom-asr-field type="text" autocomplete="off" spellcheck="false" placeholder="填写控制台中的 APPID" />
+              </label>
+              <div class="api-field">
+                <label for="custom-asr-api-key">讯飞 APIKey</label>
+                <span class="credential-input">
+                  <input id="custom-asr-api-key" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APIKey" />
+                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-key" aria-label="显示 APIKey">显示</button>
+                </span>
+              </div>
+              <div class="api-field">
+                <label for="custom-asr-api-secret">讯飞 APISecret</label>
+                <span class="credential-input">
+                  <input id="custom-asr-api-secret" data-custom-asr-field type="password" autocomplete="new-password" spellcheck="false" placeholder="填写实时语音转写 APISecret" />
+                  <button class="credential-visibility" type="button" data-credential-target="custom-asr-api-secret" aria-label="显示 APISecret">显示</button>
+                </span>
+                <small>保存后，三个现有麦克风入口都会优先使用这组凭据。</small>
+              </div>
+            </div>
+            <p class="api-security-note"><strong>请留意：</strong>纯前端无法隐藏 APISecret。本机保存的凭据可被同源脚本、浏览器扩展或持有该设备的人读取，请使用可轮换、限额的独立凭据。</p>
+            <p class="profile-sync-status" id="custom-asr-status" role="status">尚未保存自定义语音转写配置。</p>
+            <div class="settings-actions api-settings-actions">
+              <button class="secondary-button" id="custom-asr-test" type="button">测试语音转写</button>
+              <button class="primary-button" id="custom-asr-save" type="button"><span>保存语音配置</span><span aria-hidden="true">→</span></button>
+              <button class="danger-text-button" id="custom-asr-clear" type="button">清除语音转写配置</button>
+            </div>
+          </section>
+          <section class="settings-card ai-settings-card">
+            <div class="settings-title-row">
+              <div><h2>AI 与持续画像</h2><p>先保存模型配置；两项授权彼此独立，关闭后立即停止新的请求。</p></div>
+              <span class="ai-endpoint-label">Direct API</span>
+            </div>
+            <label class="settings-toggle" for="ai-service-consent">
+              <input id="ai-service-consent" type="checkbox" />
+              <span><strong>按次使用 AI 服务</strong><small>把当次聊天或明确选中的材料直接发送到你配置的模型服务商</small></span>
+            </label>
+            <label class="settings-toggle" for="ai-profile-consent">
+              <input id="ai-profile-consent" type="checkbox" disabled />
+              <span><strong>持续更新本机画像</strong><small>关键节点异步合并文字、图片理解与互动；只保存文字化结果，不保存原图</small></span>
+            </label>
+            <p class="profile-sync-status" id="settings-ai-status" role="status">尚未启用持续画像</p>
+            <article class="settings-profile-preview" id="settings-profile-preview" hidden>
+              <p>当前可修正画像</p>
+              <h3 id="settings-profile-headline"></h3>
+              <div id="settings-profile-summary"></div>
+              <small id="settings-profile-time"></small>
+            </article>
+            <button class="secondary-button full-width" id="settings-clear-profile" type="button" disabled>删除本机多模态文字画像</button>
+          </section>
+        </section>
+
         <nav class="bottom-nav" id="bottom-nav" aria-label="主要导航">
           <button type="button" data-nav-target="today-screen" aria-current="page"><span aria-hidden="true">◐</span><strong>今天</strong></button>
           <button type="button" data-nav-target="thoughts-screen"><span aria-hidden="true">＋</span><strong>闪念</strong></button>
@@ -781,6 +810,29 @@
               <article><span>⌁</span><div><strong>回响</strong><p>把一句话留给未来，再在某一天重新遇见。</p></div></article>
             </div>
             <button class="primary-button" id="finish-onboarding" type="button"><span>从今天开始</span><span aria-hidden="true">→</span></button>
+          </section>
+        </div>
+
+        <div class="modal-backdrop game-tutorial-backdrop" id="game-tutorial-modal" hidden>
+          <section class="game-tutorial-modal" role="dialog" aria-modal="true" aria-labelledby="game-tutorial-title" aria-describedby="game-tutorial-description">
+            <button class="modal-close" id="close-game-tutorial" type="button" aria-label="关闭情境选择玩法">×</button>
+            <p class="eyebrow">第一张卡 · 先看一次</p>
+            <h2 id="game-tutorial-title">跟着此刻更真实的反应，轻轻选一边。</h2>
+            <div class="game-tutorial-demo" aria-hidden="true">
+              <span class="tutorial-direction tutorial-direction-left">← 选择左边</span>
+              <span class="tutorial-direction tutorial-direction-right">选择右边 →</span>
+              <div class="tutorial-demo-card">
+                <small>情境卡</small>
+                <p>哪一种反应<br>更靠近此刻的你？</p>
+              </div>
+              <span class="tutorial-finger">●</span>
+            </div>
+            <p class="game-tutorial-description" id="game-tutorial-description">左右滑动卡片，或直接点击下方选项；如果都不像，可以选择“两个都不像”。</p>
+            <div class="tutorial-tide-note">
+              <div aria-hidden="true"><span>◐ 觉察</span><span>⌁ 安定</span><span>∞ 联结</span><span>✦ 精力</span></div>
+              <p>每次选择会轻轻牵动潮位。满潮会遇见一张短句，章节结束不会计算总分。</p>
+            </div>
+            <button class="primary-button" id="finish-game-tutorial" type="button"><span>我知道怎么玩了</span><span aria-hidden="true">→</span></button>
           </section>
         </div>
 
